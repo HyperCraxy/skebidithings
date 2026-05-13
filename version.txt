@@ -1,0 +1,1 @@
+{"Platform":"Windows","Versions":{"Software":"1.2.6","Roblox":"version-ec412128eba3476e"},"Changelog":"Updated latest version, for full updatelog check our discord"}
