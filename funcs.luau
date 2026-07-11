@@ -427,3 +427,149 @@ do
     end
      getgenv().runonactor =  getgenv().run_on_actor
 end
+
+getgenv().cansignalreplicate = function(signal)
+    assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'cansignalreplicate' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
+    local replicatingClasses = { RemoteEvent=true, RemoteFunction=true, UnreliableRemoteEvent=true }
+    local replicatingSignals = { "OnClientEvent", "OnServerEvent", "OnClientInvoke", "OnServerInvoke" }
+    for _, svcName in ipairs({ "ReplicatedStorage", "Workspace", "Players", "ReplicatedFirst" }) do
+        local ok2, svc = pcall(function() return game:GetService(svcName) end)
+        if ok2 then
+            for _, desc in ipairs(svc:GetDescendants()) do
+                if replicatingClasses[desc.ClassName] then
+                    for _, sigName in ipairs(replicatingSignals) do
+                        local ok3, sig = pcall(function() return desc[sigName] end)
+                        if ok3 and sig == signal then return true end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local _signalArgTypes = {
+    Touched={"BasePart"}, TouchEnded={"BasePart"}, Changed={"string"}, ChildAdded={"Instance"},
+    ChildRemoved={"Instance"}, DescendantAdded={"Instance"}, DescendantRemoving={"Instance"},
+    AncestryChanged={"Instance","Instance"}, AttributeChanged={"string"}, ChildrenChanged={"Instance"},
+    OnClientEvent={"any"}, OnServerEvent={"Player","any"}, PropertyChanged={"string"},
+    Heartbeat={"number"}, Stepped={"number","number"}, RenderStepped={"number"},
+    PostSimulation={"number"}, PreSimulation={"number"}, PreRender={"number"}, PreAnimation={"number"},
+    MembershipChanged={"Player"}, PlayerAdded={"Player"}, PlayerRemoving={"Player"},
+    CharacterAdded={"Model"}, CharacterRemoving={"Model"}, Fired={}, Event={},
+}
+
+getgenv().getsignalarguments = function(signal)
+    assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getsignalarguments' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
+    local sigStr  = tostring(signal)
+    local sigName = sigStr:match("Signal%s+(.+)") or sigStr:match("%.(%w+)$") or sigStr
+    if _signalArgTypes[sigName] then
+        local result = _signalArgTypes[sigName]
+        return #result == 0 and { "any" } or result
+    end
+    local args, conn = nil, nil
+    pcall(function()
+        conn = signal:Once(function(...)
+            args = {}
+            for i = 1, select("#", ...) do table.insert(args, typeof(select(i, ...))) end
+        end)
+    end)
+    if conn then pcall(function() conn:Disconnect() end) end
+    if args and #args > 0 then return args end
+    return { "any" }
+end
+getgenv().getsignalargumentsinfo = function(signal)
+    assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getsignalargumentsinfo' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
+    
+    local signalStr = tostring(signal)
+    local signalName = signalStr:match("Signal%s+(.+)") or signalStr:match("%.(%w+)$") or signalStr
+    
+    local argumentTypes = {
+        Touched = { { Type = "BasePart", Name = "hit" } },
+        TouchEnded = { { Type = "BasePart", Name = "hit" } },
+        Changed = { { Type = "string", Name = "property" } },
+        ChildAdded = { { Type = "Instance", Name = "child" } },
+        ChildRemoved = { { Type = "Instance", Name = "child" } },
+        DescendantAdded = { { Type = "Instance", Name = "descendant" } },
+        DescendantRemoving = { { Type = "Instance", Name = "descendant" } },
+        AncestryChanged = { { Type = "Instance", Name = "child" }, { Type = "Instance", Name = "parent" } },
+        AttributeChanged = { { Type = "string", Name = "attribute" } },
+        ChildrenChanged = { { Type = "Instance", Name = "child" } },
+        OnClientEvent = { { Type = "any", Name = "..." } },
+        OnServerEvent = { { Type = "Player", Name = "player" }, { Type = "any", Name = "..." } },
+        PropertyChanged = { { Type = "string", Name = "property" } },
+        Heartbeat = { { Type = "number", Name = "deltaTime" } },
+        Stepped = { { Type = "number", Name = "time" }, { Type = "number", Name = "deltaTime" } },
+        RenderStepped = { { Type = "number", Name = "deltaTime" } },
+        PostSimulation = { { Type = "number", Name = "deltaTime" } },
+        PreSimulation = { { Type = "number", Name = "deltaTime" } },
+        PreRender = { { Type = "number", Name = "deltaTime" } },
+        PreAnimation = { { Type = "number", Name = "deltaTime" } },
+        MembershipChanged = { { Type = "Player", Name = "player" } },
+        PlayerAdded = { { Type = "Player", Name = "player" } },
+        PlayerRemoving = { { Type = "Player", Name = "player" } },
+        CharacterAdded = { { Type = "Model", Name = "character" } },
+        CharacterRemoving = { { Type = "Model", Name = "character" } },
+        Fired = {},
+        Event = {},
+    }
+    
+    if argumentTypes[signalName] then
+        return argumentTypes[signalName]
+    end
+    
+    local args, conn = nil, nil
+    pcall(function()
+        conn = signal:Once(function(...)
+            args = {}
+            for i = 1, select("#", ...) do
+                local val = select(i, ...)
+                local t = typeof(val)
+                if t == "Instance" then
+                    t = val.ClassName
+                end
+                table.insert(args, { Type = t, Name = "arg" .. i })
+            end
+        end)
+    end)
+    
+    if conn then pcall(function() conn:Disconnect() end) end
+    
+    if args and #args > 0 then return args end
+    
+    return { { Type = "any", Name = "..." } }
+end
+
+getgenv().getsignalwhitelist = function()
+    return {
+        { Event = "Touched", Parent = "BasePart" },
+        { Event = "TouchEnded", Parent = "BasePart" },
+        { Event = "Changed", Parent = "Instance" },
+        { Event = "ChildAdded", Parent = "Instance" },
+        { Event = "ChildRemoved", Parent = "Instance" },
+        { Event = "DescendantAdded", Parent = "Instance" },
+        { Event = "DescendantRemoving", Parent = "Instance" },
+        { Event = "AncestryChanged", Parent = "Instance" },
+        { Event = "AttributeChanged", Parent = "Instance" },
+        { Event = "ChildrenChanged", Parent = "Instance" },
+        { Event = "OnClientEvent", Parent = "RemoteEvent" },
+        { Event = "OnServerEvent", Parent = "RemoteEvent" },
+        { Event = "OnClientInvoke", Parent = "RemoteFunction" },
+        { Event = "OnServerInvoke", Parent = "RemoteFunction" },
+        { Event = "PropertyChanged", Parent = "ValueBase" },
+        { Event = "Heartbeat", Parent = "RunService" },
+        { Event = "Stepped", Parent = "RunService" },
+        { Event = "RenderStepped", Parent = "RunService" },
+        { Event = "PostSimulation", Parent = "RunService" },
+        { Event = "PreSimulation", Parent = "RunService" },
+        { Event = "PreRender", Parent = "RunService" },
+        { Event = "PreAnimation", Parent = "RunService" },
+        { Event = "MembershipChanged", Parent = "Players" },
+        { Event = "PlayerAdded", Parent = "Players" },
+        { Event = "PlayerRemoving", Parent = "Players" },
+        { Event = "CharacterAdded", Parent = "Player" },
+        { Event = "CharacterRemoving", Parent = "Player" },
+        { Event = "Fired", Parent = "BindableEvent" },
+        { Event = "Event", Parent = "BindableEvent" },
+    }
+end
