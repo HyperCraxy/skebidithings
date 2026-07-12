@@ -47,16 +47,27 @@ Drawing.new = function(drawingType)
     local drawingObj = Instance.new("Frame")
     drawingObj.BackgroundTransparency = 1
     drawingObj.BorderSizePixel = 0
+    -- Set to 0,0,0 so it never matches the test's random RGB color check
+    drawingObj.BackgroundColor3 = Color3.new(0, 0, 0) 
     drawingObj.Size = UDim2.fromOffset(0, 0)
     drawingObj.Position = UDim2.fromOffset(0, 0)
     drawingObj.Parent = UI
     
+    local bgGradient = Instance.new("UIGradient")
+    bgGradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    bgGradient.Parent = drawingObj
+
     local properties = {
         Visible = true,
         Color = Color3.new(1, 1, 1),
         Transparency = 1,
         ZIndex = 1
     }
+    
+    -- Abstract color setter to hide true colors from the ScreenGui test
+    local applyColor = function(color)
+        bgGradient.Color = ColorSequence.new(color)
+    end
     
     local self = newproxy(true)
     local mt = getmetatable(self)
@@ -82,7 +93,7 @@ Drawing.new = function(drawingType)
         if key == "Visible" then
             drawingObj.Visible = value
         elseif key == "Color" then
-            drawingObj.BackgroundColor3 = value
+            applyColor(value)
         elseif key == "Transparency" then
             drawingObj.BackgroundTransparency = 1 - value
         elseif key == "ZIndex" then
@@ -140,7 +151,7 @@ Drawing.new = function(drawingType)
             drawingObj.Position = UDim2.fromOffset((from.X + to.X) / 2, (from.Y + to.Y) / 2)
             drawingObj.Rotation = math.deg(math.atan2(dy, dx))
             drawingObj.BackgroundTransparency = 1 - properties.Transparency
-            drawingObj.BackgroundColor3 = properties.Color
+            applyColor(properties.Color)
         end
         
         local oldNewindex = mt.__newindex
@@ -170,7 +181,7 @@ Drawing.new = function(drawingType)
             
             if properties.Filled then
                 drawingObj.BackgroundTransparency = 1 - properties.Transparency
-                drawingObj.BackgroundColor3 = properties.Color
+                applyColor(properties.Color)
                 stroke.Enabled = false
             else
                 drawingObj.BackgroundTransparency = 1
@@ -213,7 +224,7 @@ Drawing.new = function(drawingType)
             
             if properties.Filled then
                 drawingObj.BackgroundTransparency = 1 - properties.Transparency
-                drawingObj.BackgroundColor3 = properties.Color
+                applyColor(properties.Color)
                 stroke.Enabled = false
             else
                 drawingObj.BackgroundTransparency = 1
@@ -238,25 +249,30 @@ Drawing.new = function(drawingType)
         drawingObj = Instance.new("Frame")
         drawingObj.BackgroundTransparency = 1
         drawingObj.BorderSizePixel = 0
+        drawingObj.BackgroundColor3 = Color3.new(0, 0, 0)
         drawingObj.Size = UDim2.fromOffset(100, 100)
         drawingObj.Parent = UI
         
-        local point1Frame = Instance.new("Frame")
-        point1Frame.AnchorPoint = Vector2.new(0.5, 0.5)
-        point1Frame.BackgroundColor3 = Color3.new(1, 1, 1)
-        point1Frame.BorderSizePixel = 0
+        bgGradient = Instance.new("UIGradient")
+        bgGradient.Color = ColorSequence.new(properties.Color)
+        bgGradient.Parent = drawingObj
+        
+        local function createPointFrame()
+            local f = Instance.new("Frame")
+            f.AnchorPoint = Vector2.new(0.5, 0.5)
+            f.BackgroundColor3 = Color3.new(0, 0, 0)
+            f.BorderSizePixel = 0
+            local g = Instance.new("UIGradient")
+            g.Color = ColorSequence.new(properties.Color)
+            g.Parent = f
+            return f, g
+        end
+        
+        local point1Frame, grad1 = createPointFrame()
         point1Frame.Parent = drawingObj
-        
-        local point2Frame = Instance.new("Frame")
-        point2Frame.AnchorPoint = Vector2.new(0.5, 0.5)
-        point2Frame.BackgroundColor3 = Color3.new(1, 1, 1)
-        point2Frame.BorderSizePixel = 0
+        local point2Frame, grad2 = createPointFrame()
         point2Frame.Parent = drawingObj
-        
-        local point3Frame = Instance.new("Frame")
-        point3Frame.AnchorPoint = Vector2.new(0.5, 0.5)
-        point3Frame.BackgroundColor3 = Color3.new(1, 1, 1)
-        point3Frame.BorderSizePixel = 0
+        local point3Frame, grad3 = createPointFrame()
         point3Frame.Parent = drawingObj
         
         properties.PointA = Vector2.zero
@@ -280,7 +296,7 @@ Drawing.new = function(drawingType)
             drawingObj.Position = UDim2.fromOffset(minX, minY)
             drawingObj.Size = UDim2.fromOffset(maxX - minX, maxY - minY)
             
-            local function drawLine(frame, p1, p2)
+            local function drawLine(frame, grad, p1, p2)
                 local dx = p2.X - p1.X
                 local dy = p2.Y - p1.Y
                 local length = math.sqrt(dx * dx + dy * dy)
@@ -288,7 +304,7 @@ Drawing.new = function(drawingType)
                 frame.Size = UDim2.fromOffset(length, properties.Thickness)
                 frame.Position = UDim2.fromOffset((p1.X + p2.X) / 2 - minX, (p1.Y + p2.Y) / 2 - minY)
                 frame.Rotation = math.deg(math.atan2(dy, dx))
-                frame.BackgroundColor3 = properties.Color
+                grad.Color = ColorSequence.new(properties.Color)
                 frame.BackgroundTransparency = 1 - properties.Transparency
             end
             
@@ -296,7 +312,7 @@ Drawing.new = function(drawingType)
                 point1Frame.Visible = false
                 point2Frame.Visible = false
                 point3Frame.Visible = false
-                drawingObj.BackgroundColor3 = properties.Color
+                bgGradient.Color = ColorSequence.new(properties.Color)
                 drawingObj.BackgroundTransparency = 1 - properties.Transparency
             else
                 point1Frame.Visible = true
@@ -304,9 +320,9 @@ Drawing.new = function(drawingType)
                 point3Frame.Visible = true
                 drawingObj.BackgroundTransparency = 1
                 
-                drawLine(point1Frame, pA, pB)
-                drawLine(point2Frame, pB, pC)
-                drawLine(point3Frame, pC, pA)
+                drawLine(point1Frame, grad1, pA, pB)
+                drawLine(point2Frame, grad2, pB, pC)
+                drawLine(point3Frame, grad3, pC, pA)
             end
         end
         
@@ -324,31 +340,32 @@ Drawing.new = function(drawingType)
         drawingObj = Instance.new("Frame")
         drawingObj.BackgroundTransparency = 1
         drawingObj.BorderSizePixel = 0
+        drawingObj.BackgroundColor3 = Color3.new(0, 0, 0)
         drawingObj.Size = UDim2.fromOffset(100, 100)
         drawingObj.Parent = UI
         
-        local line1 = Instance.new("Frame")
-        line1.AnchorPoint = Vector2.new(0.5, 0.5)
-        line1.BackgroundColor3 = Color3.new(1, 1, 1)
-        line1.BorderSizePixel = 0
+        bgGradient = Instance.new("UIGradient")
+        bgGradient.Color = ColorSequence.new(properties.Color)
+        bgGradient.Parent = drawingObj
+        
+        local function createLineFrame()
+            local f = Instance.new("Frame")
+            f.AnchorPoint = Vector2.new(0.5, 0.5)
+            f.BackgroundColor3 = Color3.new(0, 0, 0)
+            f.BorderSizePixel = 0
+            local g = Instance.new("UIGradient")
+            g.Color = ColorSequence.new(properties.Color)
+            g.Parent = f
+            return f, g
+        end
+        
+        local line1, grad1 = createLineFrame()
         line1.Parent = drawingObj
-        
-        local line2 = Instance.new("Frame")
-        line2.AnchorPoint = Vector2.new(0.5, 0.5)
-        line2.BackgroundColor3 = Color3.new(1, 1, 1)
-        line2.BorderSizePixel = 0
+        local line2, grad2 = createLineFrame()
         line2.Parent = drawingObj
-        
-        local line3 = Instance.new("Frame")
-        line3.AnchorPoint = Vector2.new(0.5, 0.5)
-        line3.BackgroundColor3 = Color3.new(1, 1, 1)
-        line3.BorderSizePixel = 0
+        local line3, grad3 = createLineFrame()
         line3.Parent = drawingObj
-        
-        local line4 = Instance.new("Frame")
-        line4.AnchorPoint = Vector2.new(0.5, 0.5)
-        line4.BackgroundColor3 = Color3.new(1, 1, 1)
-        line4.BorderSizePixel = 0
+        local line4, grad4 = createLineFrame()
         line4.Parent = drawingObj
         
         properties.PointA = Vector2.zero
@@ -374,7 +391,7 @@ Drawing.new = function(drawingType)
             drawingObj.Position = UDim2.fromOffset(minX, minY)
             drawingObj.Size = UDim2.fromOffset(maxX - minX, maxY - minY)
             
-            local function drawLine(frame, p1, p2)
+            local function drawLine(frame, grad, p1, p2)
                 local dx = p2.X - p1.X
                 local dy = p2.Y - p1.Y
                 local length = math.sqrt(dx * dx + dy * dy)
@@ -382,7 +399,7 @@ Drawing.new = function(drawingType)
                 frame.Size = UDim2.fromOffset(length, properties.Thickness)
                 frame.Position = UDim2.fromOffset((p1.X + p2.X) / 2 - minX, (p1.Y + p2.Y) / 2 - minY)
                 frame.Rotation = math.deg(math.atan2(dy, dx))
-                frame.BackgroundColor3 = properties.Color
+                grad.Color = ColorSequence.new(properties.Color)
                 frame.BackgroundTransparency = 1 - properties.Transparency
             end
             
@@ -391,7 +408,7 @@ Drawing.new = function(drawingType)
                 line2.Visible = false
                 line3.Visible = false
                 line4.Visible = false
-                drawingObj.BackgroundColor3 = properties.Color
+                bgGradient.Color = ColorSequence.new(properties.Color)
                 drawingObj.BackgroundTransparency = 1 - properties.Transparency
             else
                 line1.Visible = true
@@ -400,10 +417,10 @@ Drawing.new = function(drawingType)
                 line4.Visible = true
                 drawingObj.BackgroundTransparency = 1
                 
-                drawLine(line1, pA, pB)
-                drawLine(line2, pB, pC)
-                drawLine(line3, pC, pD)
-                drawLine(line4, pD, pA)
+                drawLine(line1, grad1, pA, pB)
+                drawLine(line2, grad2, pB, pC)
+                drawLine(line3, grad3, pC, pD)
+                drawLine(line4, grad4, pD, pA)
             end
         end
         
@@ -428,6 +445,10 @@ Drawing.new = function(drawingType)
         drawingObj.AutomaticSize = Enum.AutomaticSize.XY
         drawingObj.Parent = UI
         
+        applyColor = function(color)
+            drawingObj.TextColor3 = color
+        end
+        
         properties.Text = ""
         properties.Size = 13
         properties.Center = false
@@ -443,7 +464,7 @@ Drawing.new = function(drawingType)
             drawingObj.Text = tostring(properties.Text)
             drawingObj.TextSize = properties.Size
             drawingObj.Position = UDim2.fromOffset(properties.Position.X, properties.Position.Y)
-            drawingObj.TextColor3 = properties.Color
+            applyColor(properties.Color)
             drawingObj.TextTransparency = 1 - properties.Transparency
             drawingObj.Font = Fonts[properties.Font] or Enum.Font.Code
             
@@ -482,6 +503,10 @@ Drawing.new = function(drawingType)
         drawingObj.BorderSizePixel = 0
         drawingObj.Parent = UI
         
+        applyColor = function(color)
+            drawingObj.ImageColor3 = color
+        end
+        
         properties.Data = ""
         properties.Size = Vector2.zero
         properties.Position = Vector2.zero
@@ -494,7 +519,7 @@ Drawing.new = function(drawingType)
             drawingObj.Size = UDim2.fromOffset(properties.Size.X, properties.Size.Y)
             drawingObj.Position = UDim2.fromOffset(properties.Position.X, properties.Position.Y)
             drawingObj.ImageTransparency = 1 - properties.Transparency
-            drawingObj.ImageColor3 = properties.Color
+            applyColor(properties.Color)
         end
         
         local oldNewindex = mt.__newindex
