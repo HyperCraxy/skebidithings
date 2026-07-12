@@ -728,19 +728,3 @@ end
 
 getgenv().gethui = function() return hui end
 getgenv().get_hidden_gui = getgenv().gethui
-
-local Shh = assert
-assert = function(condition, message, ...)
-    if not condition and type(message) == "string" then
-        local BigE = {
-            "⚠️⚠️ setscriptable persists between unique instances ⚠️⚠️",
-
-        }
-        for _, pattern in ipairs(BigE) do
-            if message:find(pattern, 1, true) then
-                return true
-            end
-        end
-    end
-    return shh(condition, message, ...)
-end
