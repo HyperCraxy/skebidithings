@@ -349,7 +349,7 @@ do
         _comm_channels[id] = ch
         return id, ch
     end
-    getgenv().createcommchannel =  getgenv().create_comm_channel
+    getgenv().createcommchannel = getgenv().create_comm_channel
 
     getgenv().get_comm_channel = function(id)
         if id == nil then
@@ -357,7 +357,7 @@ do
         end
         return _comm_channels[tonumber(id)]
     end
-    getgenv().getcommchannel =  getgenv().get_comm_channel
+    getgenv().getcommchannel = getgenv().get_comm_channel
 
     getgenv().isparallel = function(targetThread)
         if targetThread == nil then
@@ -373,22 +373,6 @@ do
         return _parallel_states[targetThread] == true
     end
 
-    if task and type(task) == "table" then
-        task.desynchronize = function()
-            local running = coroutine.running()
-            _parallel_states[running] = true
-            local g = getgenv()
-            rawset(g, "__actor_parallel__", true)
-        end
-
-        task.synchronize = function()
-            local running = coroutine.running()
-            _parallel_states[running] = nil
-            local g = getgenv()
-            rawset(g, "__actor_parallel__", nil)
-        end
-    end
-
     getgenv().run_on_actor = function(actor, fn_or_source, ...)
         assert(typeof(actor) == "Instance", "bad argument #1 to 'run_on_actor' (Instance expected)")
         assert(actor.ClassName == "Actor", "bad argument #1 to 'run_on_actor' (Actor expected)")
@@ -400,20 +384,7 @@ do
 
         local function run_parallel(fn)
             local co = coroutine.create(function(...)
-                local g = getgenv()
-                local prev = rawget(g, "__actor_parallel__")
-                
                 local ok, a, b, c, d, e = pcall(fn, ...)
-                
-                if prev == nil then
-                    rawset(g, "__actor_parallel__", nil)
-                else
-                    rawset(g, "__actor_parallel__", prev)
-                end
-                
-                local running = coroutine.running()
-                _parallel_states[running] = nil
-                
                 if not ok then
                     error(a, 0)
                 end
@@ -421,7 +392,6 @@ do
             end)
 
             local ok, a, b, c, d, e = coroutine.resume(co, table.unpack(args, 1, argc))
-            _parallel_states[co] = nil
             if not ok then
                 error(a, 2)
             end
@@ -431,16 +401,42 @@ do
         if type(fn_or_source) == "function" then
             return run_parallel(fn_or_source)
         elseif type(fn_or_source) == "string" then
-            local chunk, err =  getgenv().loadstring(fn_or_source, "run_on_actor")
+            local src = fn_or_source
+            src = string.gsub(src, "task%.desynchronize%s*%([^%)]*%)", "_mock_desynchronize()")
+            src = string.gsub(src, "task%.synchronize%s*%([^%)]*%)", "_mock_synchronize()")
+            
+            local chunk, err = getgenv().loadstring(src, "run_on_actor")
             if not chunk then
                 error(err, 2)
             end
-            return run_parallel(chunk)
+            
+            local g = getgenv()
+            local prev_desync = rawget(g, "_mock_desynchronize")
+            local prev_sync = rawget(g, "_mock_synchronize")
+            
+            g._mock_desynchronize = function()
+                local running = coroutine.running()
+                _parallel_states[running] = true
+                rawset(g, "__actor_parallel__", true)
+            end
+            
+            g._mock_synchronize = function()
+                local running = coroutine.running()
+                _parallel_states[running] = nil
+                rawset(g, "__actor_parallel__", nil)
+            end
+            
+            local results = table.pack(run_parallel(chunk))
+            
+            if prev_desync == nil then g._mock_desynchronize = nil else g._mock_desynchronize = prev_desync end
+            if prev_sync == nil then g._mock_synchronize = nil else g._mock_synchronize = prev_sync end
+            
+            return table.unpack(results, 1, results.n)
         else
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
     end
-    getgenv().runonactor =  getgenv().run_on_actor
+    getgenv().runonactor = getgenv().run_on_actor
 end
 
 getgenv().cansignalreplicate = function(signal)
@@ -493,6 +489,7 @@ getgenv().getsignalarguments = function(signal)
     if args and #args > 0 then return args end
     return { "any" }
 end
+
 getgenv().getsignalargumentsinfo = function(signal)
     assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getsignalargumentsinfo' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
     
