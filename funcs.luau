@@ -699,13 +699,13 @@ getgenv().saveinstance = function(obj_or_options, options)
     print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
 
     if not _saveinstance_func then
-        local source = env.HttpGet("https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau", true)
+        local source = getgenv().HttpGet("https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau", true)
 
         if not source or source == "" then
             error("Failed to download saveinstance script from GitHub", 2)
         end
 
-        local saveinstanceLoader, err = env.loadstring(source, "saveinstance_loader")
+        local saveinstanceLoader, err = getgenv().loadstring(source, "saveinstance_loader")
         if not saveinstanceLoader then
             error("Failed to load saveinstance script: " .. tostring(err), 2)
         end
