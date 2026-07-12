@@ -690,14 +690,41 @@ end
 getgenv().Signal    = { new = makeSignal }
 getgenv().makeSignal = makeSignal
 
-local cg_ok, cg = pcall(function() return game:GetService("CoreGui") end)
-if not cg_ok or not cg then
-    pcall(function()
-        cg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-    end)
+local function get_ui_parent()
+    local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if ok and coreGui then
+        return coreGui
+    end
+
+    local Players = game:GetService("Players")
+    local localPlayer = Players.LocalPlayer
+    
+    if not localPlayer then
+        while not Players.LocalPlayer do
+            task.wait(0.1)
+        end
+        localPlayer = Players.LocalPlayer
+    end
+
+    local ok2, playerGui = pcall(function() return localPlayer:WaitForChild("PlayerGui", 10) end)
+    if ok2 and playerGui then
+        return playerGui
+    end
+
+    return game:GetService("Workspace")
 end
-local hui = Instance.new("Folder")
-hui.Name = "FluxusUI"
-hui.Parent = cg
+
+local cg = get_ui_parent()
+
+local hui
+local ok, existing = pcall(function() return cg:FindFirstChild("HiddenUI") end)
+if ok and existing and existing:IsA("Folder") then
+    hui = existing
+else
+    hui = Instance.new("Folder")
+    hui.Name = "HiddenUI"
+    pcall(function() hui.Parent = cg end)
+end
+
 getgenv().gethui = function() return hui end
-getgenv().get_hidden_gui = gethui
+getgenv().get_hidden_gui = getgenv().gethui
