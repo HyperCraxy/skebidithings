@@ -676,3 +676,8 @@ end
 
 getgenv().Signal    = { new = makeSignal }
 getgenv().makeSignal = makeSignal
+local cg = game:GetService("CoreGui")
+local hui = Instance.new("ScreenGui", cg)
+hui.Name = "hidden_ui_container"
+getgenv().gethui = function() return hui end
+getgenv().get_hidden_gui = gethui
