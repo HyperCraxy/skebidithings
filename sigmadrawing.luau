@@ -8,12 +8,60 @@ local Fonts = {
     [3] = Enum.Font.RobotoMono
 }
 
+local function get_ui_parent()
+    local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if ok and coreGui then
+        return coreGui
+    end
+
+    local Players = game:GetService("Players")
+    local localPlayer = Players.LocalPlayer
+    
+    if not localPlayer then
+        while not Players.LocalPlayer do
+            task.wait(0.1)
+        end
+        localPlayer = Players.LocalPlayer
+    end
+
+    local ok2, playerGui = pcall(function() return localPlayer:WaitForChild("PlayerGui", 10) end)
+    if ok2 and playerGui then
+        return playerGui
+    end
+
+    return game:GetService("Workspace")
+end
+
+local cg = get_ui_parent()
+
+local hui
+local ok, existing = pcall(function() return cg:FindFirstChild("HiddenUI") end)
+if ok and existing and existing:IsA("Folder") then
+    hui = existing
+else
+    hui = Instance.new("Folder")
+    hui.Name = "HiddenUI"
+    pcall(function() hui.Parent = cg end)
+end
+
+getgenv().gethui = function() return hui end
+getgenv().get_hidden_gui = getgenv().gethui
+
+local safe_gethui = gethui or getgenv().gethui
+local uiParent = cg
+if safe_gethui then
+    local success, result = pcall(safe_gethui)
+    if success and result then
+        uiParent = result
+    end
+end
+
 local UI = Instance.new("ScreenGui")
 UI.Name = "DrawingLib"
 UI.DisplayOrder = 999999
 UI.IgnoreGuiInset = true
 UI.ResetOnSpawn = false
-UI.Parent = gethui()
+UI.Parent = uiParent
 
 local Drawing = {
     Fonts = {
