@@ -39,10 +39,6 @@ if not getgenv().folder then
     getgenv().folder = {}
 end
 
-if not getgenv().folder then
-    getgenv().folder = {}
-end
-
 local game = game
 local Instance = Instance
 
@@ -204,6 +200,7 @@ end
 
 getgenv().bit32 = bit32
 getgenv().bit = bit32
+
 do
     local _comm_channels = {}
     local _next_comm_channel_id = 1
@@ -334,17 +331,17 @@ do
         return channel
     end
 
-     getgenv().getactors = function()
+    getgenv().getactors = function()
         local out = {}
-        for _, v in ipairs(_realGame:GetDescendants()) do
+        for _, v in ipairs(game:GetDescendants()) do
             if v.ClassName == "Actor" then
-                out[#out + 1] = ToProxy(v)
+                out[#out + 1] = v
             end
         end
         return out
     end
 
-     getgenv().create_comm_channel = function()
+    getgenv().create_comm_channel = function()
         local id = _next_comm_channel_id
         _next_comm_channel_id += 1
         local ch = _new_comm_channel()
@@ -352,17 +349,17 @@ do
         _comm_channels[id] = ch
         return id, ch
     end
-     getgenv().createcommchannel =  getgenv().create_comm_channel
+    getgenv().createcommchannel =  getgenv().create_comm_channel
 
-     getgenv().get_comm_channel = function(id)
+    getgenv().get_comm_channel = function(id)
         if id == nil then
             return nil
         end
         return _comm_channels[tonumber(id)]
     end
-     getgenv().getcommchannel =  getgenv().get_comm_channel
+    getgenv().getcommchannel =  getgenv().get_comm_channel
 
-     getgenv().isparallel = function(targetThread)
+    getgenv().isparallel = function(targetThread)
         if targetThread == nil then
             targetThread = coroutine.running()
             if type(targetThread) == "thread" and _parallel_states[targetThread] == true then
@@ -376,7 +373,23 @@ do
         return _parallel_states[targetThread] == true
     end
 
-     getgenv().run_on_actor = function(actor, fn_or_source, ...)
+    if task and type(task) == "table" then
+        task.desynchronize = function()
+            local running = coroutine.running()
+            _parallel_states[running] = true
+            local g = getgenv()
+            rawset(g, "__actor_parallel__", true)
+        end
+
+        task.synchronize = function()
+            local running = coroutine.running()
+            _parallel_states[running] = nil
+            local g = getgenv()
+            rawset(g, "__actor_parallel__", nil)
+        end
+    end
+
+    getgenv().run_on_actor = function(actor, fn_or_source, ...)
         assert(typeof(actor) == "Instance", "bad argument #1 to 'run_on_actor' (Instance expected)")
         assert(actor.ClassName == "Actor", "bad argument #1 to 'run_on_actor' (Actor expected)")
         local argc = select("#", ...)
@@ -387,18 +400,20 @@ do
 
         local function run_parallel(fn)
             local co = coroutine.create(function(...)
-                local running = coroutine.running()
-                _parallel_states[running] = true
                 local g = getgenv()
                 local prev = rawget(g, "__actor_parallel__")
-                rawset(g, "__actor_parallel__", true)
+                
                 local ok, a, b, c, d, e = pcall(fn, ...)
+                
                 if prev == nil then
                     rawset(g, "__actor_parallel__", nil)
                 else
                     rawset(g, "__actor_parallel__", prev)
                 end
+                
+                local running = coroutine.running()
                 _parallel_states[running] = nil
+                
                 if not ok then
                     error(a, 0)
                 end
@@ -425,7 +440,7 @@ do
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
     end
-     getgenv().runonactor =  getgenv().run_on_actor
+    getgenv().runonactor =  getgenv().run_on_actor
 end
 
 getgenv().cansignalreplicate = function(signal)
@@ -573,6 +588,7 @@ getgenv().getsignalwhitelist = function()
         { Event = "Event", Parent = "BindableEvent" },
     }
 end
+
 local function makeSignal()
     local threads = {}
     local function reusableThreadCall(callback, thread, ...) callback(...); table.insert(threads, thread) end
@@ -676,10 +692,15 @@ end
 
 getgenv().Signal    = { new = makeSignal }
 getgenv().makeSignal = makeSignal
-local cg = game:GetService("CoreGui")
-local hui = Instance.new("ScreenGui", cg)
-hui.Name = "hidden_ui_container"
+
+local cg_ok, cg = pcall(function() return game:GetService("CoreGui") end)
+if not cg_ok or not cg then
+    pcall(function()
+        cg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    end)
+end
+local hui = Instance.new("Folder")
+hui.Name = "FluxusUI"
+hui.Parent = cg
 getgenv().gethui = function() return hui end
 getgenv().get_hidden_gui = gethui
-
-
