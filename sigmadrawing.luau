@@ -13,7 +13,7 @@ UI.Name = "DrawingLib"
 UI.DisplayOrder = 999999
 UI.IgnoreGuiInset = true
 UI.ResetOnSpawn = false
-UI.Parent = gethui()
+UI.Parent = getgenv().gethui()
 
 local Drawing = {
     Fonts = {
