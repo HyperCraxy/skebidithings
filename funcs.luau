@@ -1,26 +1,3 @@
-local old_getfenv = getfenv
-local env_cache = {}
-
-local function custom_getfenv(target)
-    target = target or 2 
-    
-    local success, res = pcall(old_getfenv, target)
-    if success then
-        return res
-    end
-    
-    if not env_cache[target] then
-        env_cache[target] = setmetatable({}, {
-            __index = _G,
-            __newindex = _G
-        })
-    end
-    return env_cache[target]
-end
-
-getgenv().getfenv = custom_getfenv
-
-print(true)
 local loadfile = function(path, chunkname)
     local success, content = pcall(readfile, path)
     if not success or not content then
