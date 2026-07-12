@@ -681,3 +681,48 @@ local hui = Instance.new("ScreenGui", cg)
 hui.Name = "hidden_ui_container"
 getgenv().gethui = function() return hui end
 getgenv().get_hidden_gui = gethui
+local _saveinstance_func = nil
+
+getgenv().saveinstance = function(obj_or_options, options)
+    local instance, opts
+
+    if typeof(obj_or_options) == "Instance" then
+        instance = obj_or_options
+        opts = type(options) == "table" and options or {}
+    elseif type(obj_or_options) == "table" then
+        instance = game
+        opts = obj_or_options
+    else
+        error("invalid argument #1 to 'saveinstance' (Instance or table expected, got " .. typeof(obj_or_options) .. ")", 2)
+    end
+
+    print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
+
+    if not _saveinstance_func then
+        local source = env.HttpGet("https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau", true)
+
+        if not source or source == "" then
+            error("Failed to download saveinstance script from GitHub", 2)
+        end
+
+        local saveinstanceLoader, err = env.loadstring(source, "saveinstance_loader")
+        if not saveinstanceLoader then
+            error("Failed to load saveinstance script: " .. tostring(err), 2)
+        end
+
+        local success, result = pcall(saveinstanceLoader)
+        if not success then
+            error("Failed to initialize saveinstance: " .. tostring(result), 2)
+        end
+
+        if type(result) ~= "function" then
+            error("saveinstance loader did not return a function", 2)
+        end
+
+        _saveinstance_func = result
+    end
+
+    return _saveinstance_func(instance, opts)
+end
+
+getgenv().savegame = getgenv().saveinstance
