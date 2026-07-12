@@ -1,4 +1,3 @@
-getgenv().getfenv = getgenv().getgenv
 local loadfile = function(path, chunkname)
     local success, content = pcall(readfile, path)
     if not success or not content then
