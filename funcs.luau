@@ -707,7 +707,7 @@ getgenv().getsimulationradius = function()
 end
 
 local _saveinstance = nil
-function getgenv().saveinstance(options)
+getgenv().saveinstance = function(options)
     options = options or {}
     assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
     print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
