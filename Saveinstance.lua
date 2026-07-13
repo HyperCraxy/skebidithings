@@ -3657,49 +3657,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	end
 
 	do
-		if OPTIONS.SafeMode then
-			task.spawn(function()
-				local LocalPlayer = GetLocalPlayer()
-
-				local PlayerScripts = LocalPlayer:FindFirstChildOfClass("PlayerScripts")
-				if PlayerScripts then
-					local function construct_InstanceOverride(instance)
-						local children = instance:GetChildren()
-						InstancesOverrides[instance] = {
-							__Children = children,
-						}
-						for _, child in children do
-							construct_InstanceOverride(child)
-						end
-					end
-					construct_InstanceOverride(PlayerScripts)
-
-					InstancesOverrides[LocalPlayer] = {
-						__Children = LocalPlayer:GetChildren(),
-						Properties = { Name = "[" .. LocalPlayer.ClassName .. "] " .. LocalPlayer.Name },
-					}
-				end
-				local msg =
-					"[SAVEINSTANCE SAFEMODE]\nSaving..\nDo NOT leave\nLVL7 Executor RECOMMENDED for more SAFETY\nTo Disable this: SafeMode=false (Less Protection)"
-				local function Kick()
-					LocalPlayer:Kick(msg)
-				end
-
-				Kick()
-				pcall(function()
-					Connect(service.GuiService.ErrorMessageChanged, function()
-						if service.GuiService:GetErrorMessage() ~= msg then
-							Kick()
-						end
-					end)
-				end)
-				wait_for_render()
-			end)
-
-			if CustomOptions_valid["BoostFPS"] == nil then
-				OPTIONS.BoostFPS = true
-			end
-		end
+		
 
 		if OPTIONS.BoostFPS then
 			pcall(function()
