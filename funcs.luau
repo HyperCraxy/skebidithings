@@ -711,7 +711,7 @@ getgenv().saveinstance = function(options)
     options = options or {}
     assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
     print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
-    _saveinstance = _saveinstance or env.loadstring(env.HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true), "saveinstance")()
+    _saveinstance = _saveinstance or getgenv().loadstring(env.HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true), "saveinstance")()
     return _saveinstance(options)
 end
 getgenv().savegame = getgenv().saveinstance
