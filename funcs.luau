@@ -689,3 +689,40 @@ end
 
 getgenv().Signal    = { new = makeSignal }
 getgenv().makeSignal = makeSignal
+getgenv().setsimulationradius = function(radius, maxRadius)
+    radius = tonumber(radius); maxRadius = tonumber(maxRadius) or radius
+    assert(type(radius) == "number", "invalid argument #1 to 'setsimulationradius' (number expected)")
+    plr.SimulationRadius = radius; plr.MaximumSimulationRadius = maxRadius
+end
+
+getgenv().getsimulationradius = function()
+    local radius, maxRadius = 0, 0
+    if plr then
+        local ok1, v1 = pcall(function() return plr.SimulationRadius end); if ok1 and type(v1) == "number" then radius = v1 end
+        local ok2, v2 = pcall(function() return plr.MaximumSimulationRadius end)
+        if ok2 and type(v2) == "number" then maxRadius = v2
+        else local ok3, v3 = pcall(env.gethiddenproperty, plr, "MaximumSimulationRadius"); if ok3 and type(v3) == "number" then maxRadius = v3 end end
+    end
+    return radius, maxRadius
+end
+getgenv().saveinstance = function(target, options)
+    if typeof(target) == "Instance" then
+        options = options or {}
+        assert(type(options) == "table", "invalid argument #2 to 'saveinstance' (table expected, got " .. type(options) .. ")", 2)
+        options.Object = options.Object or target
+    elseif type(target) == "table" then
+        options = target
+    elseif target == nil then
+        options = options or {}
+    else
+        assert(false, "invalid argument #1 to 'saveinstance' (Instance or table expected, got " .. typeof(target) .. ")", 2)
+    end
+    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ")", 2)
+    print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
+    if not _saveinstance then
+        _saveinstance = create_saveinstance()
+    end
+    return _saveinstance(options)
+end
+
+getgenv().savegame = getgenv().saveinstance
