@@ -701,7 +701,7 @@ getgenv().getsimulationradius = function()
         local ok1, v1 = pcall(function() return plr.SimulationRadius end); if ok1 and type(v1) == "number" then radius = v1 end
         local ok2, v2 = pcall(function() return plr.MaximumSimulationRadius end)
         if ok2 and type(v2) == "number" then maxRadius = v2
-        else local ok3, v3 = pcall(env.gethiddenproperty, plr, "MaximumSimulationRadius"); if ok3 and type(v3) == "number" then maxRadius = v3 end end
+        else local ok3, v3 = pcall(getgenv().gethiddenproperty, plr, "MaximumSimulationRadius"); if ok3 and type(v3) == "number" then maxRadius = v3 end end
     end
     return radius, maxRadius
 end
@@ -711,7 +711,7 @@ getgenv().saveinstance = function(options)
     options = options or {}
     assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
     print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
-    _saveinstance = _saveinstance or getgenv().loadstring(env.HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true), "saveinstance")()
+    _saveinstance = _saveinstance or getgenv().loadstring(getgenv().HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true), "saveinstance")()
     return _saveinstance(options)
 end
 getgenv().savegame = getgenv().saveinstance
