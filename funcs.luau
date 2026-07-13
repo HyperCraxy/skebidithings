@@ -706,12 +706,46 @@ getgenv().getsimulationradius = function()
     return radius, maxRadius
 end
 
-local _saveinstance = nil
-getgenv().saveinstance = function(options)
-    options = options or {}
-    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
+local _saveinstance_func = nil
+getgenv().saveinstance = function(obj_or_options, options)
+    local instance, opts
+
+    if typeof(obj_or_options) == "Instance" then
+        instance = obj_or_options
+        opts = type(options) == "table" and options or {}
+    elseif type(obj_or_options) == "table" then
+        instance = game
+        opts = obj_or_options
+    else
+        error("invalid argument #1 to 'saveinstance' (Instance or table expected, got " .. typeof(obj_or_options) .. ")", 2)
+    end
+
     print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
-    _saveinstance = _saveinstance or getgenv().loadstring(getgenv().HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true), "saveinstance")()
-    return _saveinstance(options)
+
+    if not _saveinstance_func then
+        local source = getgenv().HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true)
+
+        if not source or source == "" then
+            error("Failed to download saveinstance script from GitHub", 2)
+        end
+
+        local saveinstanceLoader, err = getgenv().loadstring(source, "saveinstance_loader")
+        if not saveinstanceLoader then
+            error("Failed to load saveinstance script: " .. tostring(err), 2)
+        end
+
+        local success, result = pcall(saveinstanceLoader)
+        if not success then
+            error("Failed to initialize saveinstance: " .. tostring(result), 2)
+        end
+
+        if type(result) ~= "function" then
+            error("saveinstance loader did not return a function", 2)
+        end
+
+        _saveinstance_func = result
+    end
+
+    return _saveinstance_func(instance, opts)
 end
 getgenv().savegame = getgenv().saveinstance
