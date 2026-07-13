@@ -705,24 +705,13 @@ getgenv().getsimulationradius = function()
     end
     return radius, maxRadius
 end
-getgenv().saveinstance = function(target, options)
-    if typeof(target) == "Instance" then
-        options = options or {}
-        assert(type(options) == "table", "invalid argument #2 to 'saveinstance' (table expected, got " .. type(options) .. ")", 2)
-        options.Object = options.Object or target
-    elseif type(target) == "table" then
-        options = target
-    elseif target == nil then
-        options = options or {}
-    else
-        assert(false, "invalid argument #1 to 'saveinstance' (Instance or table expected, got " .. typeof(target) .. ")", 2)
-    end
-    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ")", 2)
+
+local _saveinstance = nil
+getgenv().saveinstance = function(options)
+    options = options or {}
+    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
     print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
-    if not _saveinstance then
-        _saveinstance = create_saveinstance()
-    end
+    _saveinstance = _saveinstance or env.loadstring(env.HttpGet("https://raw.githubusercontent.com/HyperCraxy/skebidithings/refs/heads/main/Saveinstance.lua", true), "saveinstance")()
     return _saveinstance(options)
 end
-
 getgenv().savegame = getgenv().saveinstance
