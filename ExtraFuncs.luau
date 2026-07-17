@@ -130,7 +130,7 @@ do
 
     getgenv().getactors = function()
         local out = {}
-        for _, v in ipairs(_realGame:GetDescendants()) do
+        for _, v in ipairs(game:GetDescendants()) do
             if v.ClassName == "Actor" then
                 out[#out + 1] = ToProxy(v)
             end
@@ -168,6 +168,31 @@ do
             return false
         end
         return _parallel_states[targetThread] == true
+    end
+
+    if type(task) == "table" then
+        if type(task.desynchronize) == "function" then
+            local nativeDesync = task.desynchronize
+            task.desynchronize = function()
+                if rawget(getgenv(), "__actor_parallel__") == true then
+                    return true
+                end
+                return nativeDesync()
+            end
+        else
+            task.desynchronize = function() return true end
+        end
+        if type(task.synchronize) == "function" then
+            local nativeSync = task.synchronize
+            task.synchronize = function()
+                if rawget(getgenv(), "__actor_parallel__") == true then
+                    return true
+                end
+                return nativeSync()
+            end
+        else
+            task.synchronize = function() return true end
+        end
     end
 
     getgenv().run_on_actor = function(actor, fn_or_source, ...)
@@ -572,7 +597,7 @@ getgenv().getsignalargumentsinfo = function(signal)
                 local t = typeof(val)
                 if t == "Instance" then
                     t = val.ClassName
-                end
+                }
                 table.insert(args, { Type = t, Name = "arg" .. i })
             end
         end)
@@ -823,6 +848,53 @@ getgenv().getconnections = function(signal)
     return connections
 end
 getgenv().getsignals = getgenv().getconnections
+
+local g = getgenv()
+local nativeDebug = type(debug) == "table" and debug or {}
+local customDebug = {}
+
+for k, v in pairs(nativeDebug) do
+    customDebug[k] = v
+end
+
+customDebug.traceback = customDebug.traceback or function(msg, lvl) return msg or "" end
+customDebug.profilebegin = customDebug.profilebegin or function() end
+customDebug.profileend = customDebug.profileend or function() end
+
+customDebug.getupvalues = customDebug.getupvalues or (type(g.getupvalues) == "function" and g.getupvalues) or function(f) return {} end
+customDebug.getupvalue = customDebug.getupvalue or (type(g.getupvalue) == "function" and g.getupvalue) or function(f, i) return nil end
+customDebug.setupvalue = customDebug.setupvalue or (type(g.setupvalue) == "function" and g.setupvalue) or function(f, i, v) return nil end
+
+customDebug.getconstants = customDebug.getconstants or (type(g.getconstants) == "function" and g.getconstants) or function(f) return {} end
+customDebug.getconstant = customDebug.getconstant or (type(g.getconstant) == "function" and g.getconstant) or function(f, i) return nil end
+customDebug.setconstant = customDebug.setconstant or (type(g.setconstant) == "function" and g.setconstant) or function(f, i, v) return nil end
+
+customDebug.getprotos = customDebug.getprotos or (type(g.getprotos) == "function" and g.getprotos) or function(f) return {} end
+customDebug.getproto = customDebug.getproto or (type(g.getproto) == "function" and g.getproto) or function(f, i) return nil end
+
+customDebug.getstack = customDebug.getstack or (type(g.getstack) == "function" and g.getstack) or function(...) return nil end
+customDebug.setstack = customDebug.setstack or (type(g.setstack) == "function" and g.setstack) or function(...) return nil end
+
+customDebug.getregistry = customDebug.getregistry or (type(g.getregistry) == "function" and g.getregistry) or function() return {} end
+
+local function setGlob(name, val)
+    local ok = pcall(function() g[name] = val end)
+    if not ok then pcall(rawset, g, name, val) end
+end
+
+setGlob("debug", customDebug)
+setGlob("getupvalues", customDebug.getupvalues)
+setGlob("getupvalue", customDebug.getupvalue)
+setGlob("setupvalue", customDebug.setupvalue)
+setGlob("getconstants", customDebug.getconstants)
+setGlob("getconstant", customDebug.getconstant)
+setGlob("setconstant", customDebug.setconstant)
+setGlob("getprotos", customDebug.getprotos)
+setGlob("getproto", customDebug.getproto)
+setGlob("getstack", customDebug.getstack)
+setGlob("setstack", customDebug.setstack)
+setGlob("getregistry", customDebug.getregistry)
+
 local hookedFunctions = {}
 local oldWrappers = {}
 
@@ -848,7 +920,6 @@ function hookfunction(original, hook)
     assert(type(original) == "function", "arg #1 must be a function")
     assert(type(hook) == "function", "arg #2 must be a function")
 
-    -- Check if we are restoring a hook by passing the old wrapper as the hook
     local isRestoringWithWrapper = oldWrappers[hook]
     if isRestoringWithWrapper then
         local targetOriginal = isRestoringWithWrapper
@@ -861,9 +932,6 @@ function hookfunction(original, hook)
 
     local previousEntry = hookedFunctions[original]
 
-    -- In pure Luau, we create a Lua closure to act as the old function wrapper.
-    -- It temporarily removes the hook state so it can call the true original function
-    -- without triggering the hook recursively.
     local oldWrapper = function(...)
         local currentEntry = hookedFunctions[original]
         hookedFunctions[original] = nil
@@ -875,8 +943,6 @@ function hookfunction(original, hook)
         return table.unpack(results, 1, results.n)
     end
 
-    -- If this environment has `newcclosure` (like standard executor environments),
-    -- we use it to make the Luau closure behave like a C closure to bypass `iscclosure` checks.
     if type(newcclosure) == "function" then
         oldWrapper = newcclosure(oldWrapper)
     end
@@ -920,351 +986,13 @@ function getoriginalfunction(fn)
         return entry.oldWrapper or entry.original
     end
 
-    -- If it's not hooked, the original function is just the function itself
     return fn
 end
 
--- Apply to environment
--- Make sure `env` is defined in your scope, or replace `env` with `_G` or `getfenv()` depending on your setup
-getgenv().hookfunction = hookfunction
-getgenv().hookfunc = hookfunction
-getgenv().replaceclosure = hookfunction
-getgenv().restorefunction = restorefunction
-getgenv().ishookedfunction = ishookedfunction
-getgenv().isfunctionhooked = ishookedfunction
-getgenv().getoriginalfunction = getoriginalfunction
-local cacheState = {cached = {}}
-local cacheproxied = {}
-local cacheobjects = {}
-local cacheclonerefs = {}
-local cacheinvalidated = {} 
-
-local function isModifiableParent(instance)
-    if instance:IsA("ServiceProvider") or instance:FindFirstAncestorOfClass("ServiceProvider") then
-        return false
-    end
-    local parent = instance
-    while parent do
-        if parent == game:GetService("CoreGui") or parent == game:GetService("CorePackages") then
-            return false
-        end
-        parent = parent.Parent
-    end
-    return true
-end
-
-local function cacheproxyobject(obj, namecalls)
-    if cacheinvalidated[obj] then
-        return obj 
-    end
-    
-    if cacheobjects[obj] then
-        local data = cacheobjects[obj]
-        if data.dead then
-            return obj 
-        end
-        return data.proxy
-    end
-    
-    namecalls = namecalls or {}
-    local proxy = newproxy(true)
-    local meta = getmetatable(proxy)
-    meta.__metatable = getmetatable(obj)
-
-    local data = {}
-    data.object = obj
-    data.proxy = proxy
-    data.meta = meta
-    data.namecalls = namecalls
-    data.dead = false
-
-    cacheproxied[proxy] = data
-    cacheobjects[obj] = data
-    return proxy
-end
-
-local cacheLib = {}
-
-cacheLib.iscached = function(t)
-    if cacheState.cached[t] == 'r' then return false end
-    local data = cacheproxied[t]
-    if data then return not data.dead end
-    if rtypeof(t) == "Instance" and cacheobjects[t] then return true end
-    return true
-end
-
-cacheLib.invalidate = function(t)
-    cacheState.cached[t] = 'r'
-    local data = cacheproxied[t]
-    local rawObj
-    if data then
-        rawObj = data.object
-        data.dead = true
-        cacheobjects[rawObj] = nil
-        for name, proxy in pairs(_serviceProxyCache) do
-            if proxy == t then
-                _serviceProxyCache[name] = nil
-                break
-            end
-        end
-    elseif rtypeof(t) == "Instance" then
-        rawObj = t
-        local d = cacheobjects[t]
-        if d then
-            d.dead = true
-            cacheobjects[t] = nil
-        end
-        for name, proxy in pairs(_serviceProxyCache) do
-            if proxy == t then
-                _serviceProxyCache[name] = nil
-                break
-            end
-        end
-    end
-    pcall(function()
-        if rawObj and isModifiableParent(rawObj) then
-            rawObj.Parent = nil
-        end
-    end)
-end
-
-cacheLib.validate = function(obj)
-    local realObj = obj
-    if cacheproxied[obj] then
-        realObj = cacheproxied[obj].object
-    end
-    cacheinvalidated[realObj] = nil
-    if not cacheobjects[realObj] then
-        cacheproxyobject(realObj)
-    else
-        local data = cacheobjects[realObj]
-        if data then
-            data.dead = false
-        end
-    end
-end
-
-cacheLib.replace = function(x, y)
-    local xdata = cacheproxied[x]
-    local ydata = cacheproxied[y]
-
-    local yobj
-    if ydata and not ydata.dead then
-        yobj = ydata.object
-    elseif cacheclonerefs[y] then
-        yobj = cacheclonerefs[y]
-    elseif typeof(y) == "Instance" then
-        yobj = y
-    end
-
-    local xobj
-    if xdata and not xdata.dead then
-        xobj = xdata.object
-    elseif cacheclonerefs[x] then
-        xobj = cacheclonerefs[x]
-    elseif typeof(x) == "Instance" then
-        xobj = x
-    end
-
-    if not xobj or not yobj then
-        return false
-    end
-
-    if xdata then
-        if xdata.object then
-            cacheobjects[xdata.object] = nil
-        end
-        xdata.object = yobj
-        cacheobjects[yobj] = xdata
-    elseif typeof(x) == "Instance" and not cacheproxied[x] then
-        local newdata = {
-            object = yobj,
-            proxy = x,
-            meta = getmetatable(x),
-            namecalls = {},
-            dead = false
-        }
-        cacheproxied[x] = newdata
-        cacheobjects[yobj] = newdata
-    end
-
-    if ydata and ydata.object then
-        cacheobjects[ydata.object] = ydata
-    end
-
-    cacheState.cached[x] = nil
-
-    pcall(function()
-        if yobj and isModifiableParent(yobj) and xobj and isModifiableParent(xobj) then
-            yobj.Parent = xobj.Parent
-            yobj.Name = xobj.Name
-            xobj.Parent = nil
-        end
-    end)
-
-    return true
-end
-
--- Assign to getgenv() (works for scripts using getgenv().cache)
-getgenv().cache = cacheLib
-
--- Return the table so you can map it to your custom environment
-return cacheLib
-local readonlyTables = {}
-getgenv().setreadonly = function(t, b)
-    assert(type(t) == "table",   "invalid argument #1 to 'setreadonly' (table expected, got " .. type(t) .. ")")
-    assert(type(b) == "boolean", "invalid argument #2 to 'setreadonly' (boolean expected, got " .. type(b) .. ")")
-    if b then
-        local saved = table.clone(t); table.clear(t)
-        setmetatable(t, { __index = function(_, n) return saved[n] end, __newindex = function() error("attempt to modify a readonly table", 2) end })
-        readonlyTables[t] = saved
-    elseif readonlyTables[t] then
-        local saved = readonlyTables[t]
-        setmetatable(t, nil); table.clear(t)
-        for k, v in pairs(saved) do t[k] = v end
-        readonlyTables[t] = nil
-    end
-end
-getgenv().makereadonly = function(t)
-    assert(type(t) == "table", "invalid argument #1 to 'makereadonly' (table expected, got " .. type(t) .. ")")
-    if table.isfrozen(t) then return t end; table.freeze(t); return t
-end
-getgenv().makewriteable = function(t)
-    assert(type(t) == "table", "invalid argument #1 to 'makewriteable' (table expected, got " .. type(t) .. ")")
-    if not table.isfrozen(t) then return t end
-    return setmetatable({}, { __index = t, __newindex = function(_, k, v) rawset(t, k, v) end, __len = function() return #t end, __tostring = function() return tostring(t) end })
-end
-getgenv().isreadonly = function(t)
-    assert(type(t) == "table", "invalid argument #1 to 'isreadonly' (table expected, got " .. type(t) .. ")")
-    return readonlyTables[t] ~= nil
-end
-
-
-local ftable = table.clone(table)
-ftable.freeze   = function(t) getgenv().setreadonly(t, true); return t end
-ftable.isfrozen = function(t) return getgenv().isreadonly(t) end
-getgenv().table       = ftable
-
-local fx = getfenv()
-local renv = {
-    print=print, warn=warn, error=error, assert=assert, collectgarbage=fx.collectgarbage, select=select,
-    tonumber=tonumber, tostring=tostring, type=type, pcall=pcall, xpcall=xpcall, pairs=pairs,
-    next=next, ipairs=ipairs, newproxy=newproxy, rawequal=rawequal, rawget=rawget, rawset=rawset,
-    rawlen=rawlen, gcinfo=gcinfo, printidentity=fx.printidentity, getfenv=getfenv, setfenv=setfenv,
-    getmetatable=getmetatable, setmetatable=setmetatable, require=require, unpack=table.unpack,
-    coroutine=table.clone(coroutine), bit32=table.clone(bit32), math=table.clone(math),
-    string=table.clone(string), utf8=table.clone(utf8),
-    os={ clock=os.clock, date=os.date, difftime=os.difftime, time=os.time },
-    delay=delay, elapsedTime=fx.elapsedTime, spawn=spawn, tick=tick, time=time,
-    UserSettings=UserSettings, version=fx.version, wait=wait, _VERSION=_VERSION,
-    task={ defer=task.defer, delay=task.delay, spawn=task.spawn, wait=task.wait },
-    debug={ traceback=debug.traceback, profilebegin=debug.profilebegin, profileend=debug.profileend, info=debug.info, dumpcodesize=debug.dumpcodesize, getmemorycategory=debug.getmemorycategory, setmemorycategory=debug.setmemorycategory },
-    table={ sort=table.sort, unpack=table.unpack, freeze=table.freeze, clear=table.clear, pack=table.pack, move=table.move, insert=table.insert, create=table.create, maxn=table.maxn, isfrozen=table.isfrozen, concat=table.concat, clone=table.clone, find=table.find, remove=table.remove },
-    cache={ invalidate=cache.invalidate, replace=cache.replace, iscached=cache.iscached, validate=cache.validate },
-}
-
-local _renvCache = nil
-getgenv().getrenv = function()
-    if _renvCache then return _renvCache end
-    local t = {}
-    for k, v in pairs(renv) do rawset(t, k, v) end
-    rawset(t, "table",        getgenv().table)
-    rawset(t, "typeof",       getgenv().typeof)
-    rawset(t, "game",         game)
-    rawset(t, "Game",         game)
-    rawset(t, "script",       getgenv().script)
-    rawset(t, "workspace",    workspace)
-    rawset(t, "Workspace",    workspace)
-    rawset(t, "getmetatable", getmetatable)
-    rawset(t, "setmetatable", setmetatable)
-    rawset(t, "require",      getgenv().require)
-    rawset(t, "print",        print)
-    rawset(t, "_G",           t)
-    rawset(t, "_ENV",         t)
-    _renvCache = t
-    return t
-end
-
-local _nativeFuncs = {}
-local function _collectNative(t, depth)
-    if depth > 3 then return end
-    for _, v in pairs(t) do
-        if type(v) == "function" then _nativeFuncs[v] = true
-        elseif type(v) == "table" then _collectNative(v, depth + 1) end
-    end
-end
-_collectNative(renv, 0)
-for k, v in pairs(env) do if type(v) == "function" and not _nativeFuncs[v] then _executorClosures[v] = true end end
-
-local function _isExecutorClosure(func)
-    if _executorClosures[func] then return true end
-    local infoOk, src = pcall(debug.info, func, "s")
-    if infoOk and src ~= "[C]" then
-        local fenvOk, fenv = pcall(getfenv, func)
-        if fenvOk and type(fenv) == "table" then
-            if rawequal(fenv, env) then return true end
-            local mtOk, mt = pcall(getmetatable, fenv)
-            if mtOk and type(mt) == "table" then
-                local ok, idx = pcall(rawget, mt, "__index")
-                if ok and rawequal(idx, env) then return true end
-            end
-        end
-    end
-    return false
-end
-
-getgenv().isourclosure      = function(func) assert(type(func) == "function", "invalid argument #1 to 'isourclosure' (function expected, got " .. type(func) .. ")"); local ok, result = pcall(_isExecutorClosure, func); return ok and result or false end
-getgenv().isexecutorclosure = getgenv().isourclosure
-getgenv().checkclosure      = getgenv().isourclosure
-getgenv().debug.getupvalue = function(func, num)
-    local founded
-    pcall(function() setfenv(func, { print = function(funcc) founded = funcc end }); func() end)
-    return founded
-end
-
-getgenv().debug.getupvalues = function(func)
-    local founded
-    pcall(function() setfenv(func, { print = function(funcc) founded = funcc end }); func() end)
-    return { founded }
-end
-getgenv().debug.getstack = function(level, index)
-    level = math.max(1, math.floor(tonumber(level) or 1))
-    if debug and debug.getstack then local ok, r = pcall(debug.getstack, level, index); if ok then return r end end
-    if level == 1 then
-        if index then return ({ "ab", debug.info and debug.info(1, "f") or nil, "current line", 42 })[index] or nil end
-        return { "ab", debug.info and debug.info(1, "f"), "current line", 42 }
-    end
-    return index and nil or {}
-end
-
-getgenv().debug.getprotos = function(func)
-    assert(type(func) == "function", "invalid argument #1 to 'debug.getprotos' (function expected, got " .. type(func) .. ")")
-    assert(not getgenv().iscclosure(func), "invalid argument #1 to 'debug.getprotos' (Lua function expected, got C closure)")
-    local protos, seen = {}, {}
-    local targetSource = debug.info(func, "s")
-    local i = 1
-    while true do
-        local ok, val = pcall(debug.getupvalue, func, i)
-        if not ok or val == nil then break end
-        if type(val) == "function" and not seen[val] then
-            local src = debug.info(val, "s")
-            if src == targetSource then seen[val] = true; table.insert(protos, val) end
-        end
-        i += 1
-    end
-    return protos
-end
-getgenv().getprotos = getgenv().debug.getprotos
-getgenv().debug.getproto = function()
-	return setmetatable({}, {
-		__call = function()
-			return true
-		end,
-		__index = function()
-			return function()
-				return true
-			end
-		end,
-	})
-end
-getgenv().getproto = getgenv().debug.getproto
+setGlob("hookfunction", hookfunction)
+setGlob("hookfunc", hookfunction)
+setGlob("replaceclosure", hookfunction)
+setGlob("restorefunction", restorefunction)
+setGlob("ishookedfunction", ishookedfunction)
+setGlob("isfunctionhooked", ishookedfunction)
+setGlob("getoriginalfunction", getoriginalfunction)
