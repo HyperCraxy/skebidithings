@@ -1110,38 +1110,6 @@ getgenv().cache = cacheLib
 
 -- Return the table so you can map it to your custom environment
 return cacheLib
-getgenv().setrawmetatable = function(object, metatable)
-    assert(object ~= nil, "invalid argument #1 to 'setrawmetatable' (value expected, got nil)")
-    assert(
-        metatable == nil or type(metatable) == "table",
-        "invalid argument #2 to 'setrawmetatable' (table or nil expected, got " .. type(metatable) .. ")"
-    )
-    local existingmt = getrawmetatable(object)
-    if existingmt then
-        if setreadonly then
-            pcall(setreadonly, existingmt, false)
-        end
-        if metatable == nil then
-            for key in next, existingmt do
-                rawset(existingmt, key, nil)
-            end
-        else
-            for key, value in next, metatable do
-                rawset(existingmt, key, value)
-            end
-        end
-        if setreadonly then
-            pcall(setreadonly, existingmt, true)
-        end
-        return object
-    end
-    local ok, err = pcall(setmetatable, object, metatable)
-    if not ok then
-        error("setrawmetatable failed: " .. tostring(err), 2)
-    end
-
-    return object
-end
 local readonlyTables = {}
 getgenv().setreadonly = function(t, b)
     assert(type(t) == "table",   "invalid argument #1 to 'setreadonly' (table expected, got " .. type(t) .. ")")
