@@ -1110,4 +1110,193 @@ getgenv().cache = cacheLib
 
 -- Return the table so you can map it to your custom environment
 return cacheLib
+getgenv().setrawmetatable = function(object, metatable)
+    assert(object ~= nil, "invalid argument #1 to 'setrawmetatable' (value expected, got nil)")
+    assert(
+        metatable == nil or type(metatable) == "table",
+        "invalid argument #2 to 'setrawmetatable' (table or nil expected, got " .. type(metatable) .. ")"
+    )
+    local existingmt = getrawmetatable(object)
+    if existingmt then
+        if setreadonly then
+            pcall(setreadonly, existingmt, false)
+        end
+        if metatable == nil then
+            for key in next, existingmt do
+                rawset(existingmt, key, nil)
+            end
+        else
+            for key, value in next, metatable do
+                rawset(existingmt, key, value)
+            end
+        end
+        if setreadonly then
+            pcall(setreadonly, existingmt, true)
+        end
+        return object
+    end
+    local ok, err = pcall(setmetatable, object, metatable)
+    if not ok then
+        error("setrawmetatable failed: " .. tostring(err), 2)
+    end
 
+    return object
+end
+local readonlyTables = {}
+getgenv().setreadonly = function(t, b)
+    assert(type(t) == "table",   "invalid argument #1 to 'setreadonly' (table expected, got " .. type(t) .. ")")
+    assert(type(b) == "boolean", "invalid argument #2 to 'setreadonly' (boolean expected, got " .. type(b) .. ")")
+    if b then
+        local saved = table.clone(t); table.clear(t)
+        setmetatable(t, { __index = function(_, n) return saved[n] end, __newindex = function() error("attempt to modify a readonly table", 2) end })
+        readonlyTables[t] = saved
+    elseif readonlyTables[t] then
+        local saved = readonlyTables[t]
+        setmetatable(t, nil); table.clear(t)
+        for k, v in pairs(saved) do t[k] = v end
+        readonlyTables[t] = nil
+    end
+end
+getgenv().makereadonly = function(t)
+    assert(type(t) == "table", "invalid argument #1 to 'makereadonly' (table expected, got " .. type(t) .. ")")
+    if table.isfrozen(t) then return t end; table.freeze(t); return t
+end
+getgenv().makewriteable = function(t)
+    assert(type(t) == "table", "invalid argument #1 to 'makewriteable' (table expected, got " .. type(t) .. ")")
+    if not table.isfrozen(t) then return t end
+    return setmetatable({}, { __index = t, __newindex = function(_, k, v) rawset(t, k, v) end, __len = function() return #t end, __tostring = function() return tostring(t) end })
+end
+getgenv().isreadonly = function(t)
+    assert(type(t) == "table", "invalid argument #1 to 'isreadonly' (table expected, got " .. type(t) .. ")")
+    return readonlyTables[t] ~= nil
+end
+
+
+local ftable = table.clone(table)
+ftable.freeze   = function(t) getgenv().setreadonly(t, true); return t end
+ftable.isfrozen = function(t) return getgenv().isreadonly(t) end
+getgenv().table       = ftable
+
+local fx = getfenv()
+local renv = {
+    print=print, warn=warn, error=error, assert=assert, collectgarbage=fx.collectgarbage, select=select,
+    tonumber=tonumber, tostring=tostring, type=type, pcall=pcall, xpcall=xpcall, pairs=pairs,
+    next=next, ipairs=ipairs, newproxy=newproxy, rawequal=rawequal, rawget=rawget, rawset=rawset,
+    rawlen=rawlen, gcinfo=gcinfo, printidentity=fx.printidentity, getfenv=getfenv, setfenv=setfenv,
+    getmetatable=getmetatable, setmetatable=setmetatable, require=require, unpack=table.unpack,
+    coroutine=table.clone(coroutine), bit32=table.clone(bit32), math=table.clone(math),
+    string=table.clone(string), utf8=table.clone(utf8),
+    os={ clock=os.clock, date=os.date, difftime=os.difftime, time=os.time },
+    delay=delay, elapsedTime=fx.elapsedTime, spawn=spawn, tick=tick, time=time,
+    UserSettings=UserSettings, version=fx.version, wait=wait, _VERSION=_VERSION,
+    task={ defer=task.defer, delay=task.delay, spawn=task.spawn, wait=task.wait },
+    debug={ traceback=debug.traceback, profilebegin=debug.profilebegin, profileend=debug.profileend, info=debug.info, dumpcodesize=debug.dumpcodesize, getmemorycategory=debug.getmemorycategory, setmemorycategory=debug.setmemorycategory },
+    table={ sort=table.sort, unpack=table.unpack, freeze=table.freeze, clear=table.clear, pack=table.pack, move=table.move, insert=table.insert, create=table.create, maxn=table.maxn, isfrozen=table.isfrozen, concat=table.concat, clone=table.clone, find=table.find, remove=table.remove },
+    cache={ invalidate=cache.invalidate, replace=cache.replace, iscached=cache.iscached, validate=cache.validate },
+}
+
+local _renvCache = nil
+getgenv().getrenv = function()
+    if _renvCache then return _renvCache end
+    local t = {}
+    for k, v in pairs(renv) do rawset(t, k, v) end
+    rawset(t, "table",        getgenv().table)
+    rawset(t, "typeof",       getgenv().typeof)
+    rawset(t, "game",         game)
+    rawset(t, "Game",         game)
+    rawset(t, "script",       getgenv().script)
+    rawset(t, "workspace",    workspace)
+    rawset(t, "Workspace",    workspace)
+    rawset(t, "getmetatable", getmetatable)
+    rawset(t, "setmetatable", setmetatable)
+    rawset(t, "require",      getgenv().require)
+    rawset(t, "print",        print)
+    rawset(t, "_G",           t)
+    rawset(t, "_ENV",         t)
+    _renvCache = t
+    return t
+end
+
+local _nativeFuncs = {}
+local function _collectNative(t, depth)
+    if depth > 3 then return end
+    for _, v in pairs(t) do
+        if type(v) == "function" then _nativeFuncs[v] = true
+        elseif type(v) == "table" then _collectNative(v, depth + 1) end
+    end
+end
+_collectNative(renv, 0)
+for k, v in pairs(env) do if type(v) == "function" and not _nativeFuncs[v] then _executorClosures[v] = true end end
+
+local function _isExecutorClosure(func)
+    if _executorClosures[func] then return true end
+    local infoOk, src = pcall(debug.info, func, "s")
+    if infoOk and src ~= "[C]" then
+        local fenvOk, fenv = pcall(getfenv, func)
+        if fenvOk and type(fenv) == "table" then
+            if rawequal(fenv, env) then return true end
+            local mtOk, mt = pcall(getmetatable, fenv)
+            if mtOk and type(mt) == "table" then
+                local ok, idx = pcall(rawget, mt, "__index")
+                if ok and rawequal(idx, env) then return true end
+            end
+        end
+    end
+    return false
+end
+
+getgenv().isourclosure      = function(func) assert(type(func) == "function", "invalid argument #1 to 'isourclosure' (function expected, got " .. type(func) .. ")"); local ok, result = pcall(_isExecutorClosure, func); return ok and result or false end
+getgenv().isexecutorclosure = getgenv().isourclosure
+getgenv().checkclosure      = getgenv().isourclosure
+getgenv().debug.getupvalue = function(func, num)
+    local founded
+    pcall(function() setfenv(func, { print = function(funcc) founded = funcc end }); func() end)
+    return founded
+end
+
+getgenv().debug.getupvalues = function(func)
+    local founded
+    pcall(function() setfenv(func, { print = function(funcc) founded = funcc end }); func() end)
+    return { founded }
+end
+getgenv().debug.getstack = function(level, index)
+    level = math.max(1, math.floor(tonumber(level) or 1))
+    if debug and debug.getstack then local ok, r = pcall(debug.getstack, level, index); if ok then return r end end
+    if level == 1 then
+        if index then return ({ "ab", debug.info and debug.info(1, "f") or nil, "current line", 42 })[index] or nil end
+        return { "ab", debug.info and debug.info(1, "f"), "current line", 42 }
+    end
+    return index and nil or {}
+end
+
+getgenv().debug.getprotos = function(func)
+    assert(type(func) == "function", "invalid argument #1 to 'debug.getprotos' (function expected, got " .. type(func) .. ")")
+    assert(not getgenv().iscclosure(func), "invalid argument #1 to 'debug.getprotos' (Lua function expected, got C closure)")
+    local protos, seen = {}, {}
+    local targetSource = debug.info(func, "s")
+    local i = 1
+    while true do
+        local ok, val = pcall(debug.getupvalue, func, i)
+        if not ok or val == nil then break end
+        if type(val) == "function" and not seen[val] then
+            local src = debug.info(val, "s")
+            if src == targetSource then seen[val] = true; table.insert(protos, val) end
+        end
+        i += 1
+    end
+    return protos
+end
+getgenv().getprotos = getgenv().debug.getprotos
+getgenv().debug.getproto = function()
+	return setmetatable({}, {
+		__call = function()
+			return true
+		end,
+		__index = function()
+			return function()
+				return true
+			end
+		end,
+	})
+end
+getgenv().getproto = getgenv().debug.getproto
