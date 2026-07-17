@@ -618,3 +618,318 @@ getgenv().getsignalwhitelist = function()
         { Event = "Event", Parent = "BindableEvent" },
     }
 end
+local _metatableCache = setmetatable({}, { __mode = "k" })
+
+
+getgenv().getgc = function(includeTables)
+    includeTables = includeTables or false
+    local results, seen = {}, {}
+    local function add(v)
+        if v == nil or seen[v] then return end
+        seen[v] = true; table.insert(results, v)
+    end
+    if type(debug) == "table" and type(debug.getregistry) == "function" then
+        local ok, registry = pcall(debug.getregistry)
+        if ok and type(registry) == "table" then
+            for _, v in pairs(registry) do
+                local t = type(v)
+                if t == "function" or t == "userdata" or (includeTables and t == "table") then add(v) end
+            end
+        end
+    end
+    local function scrapeTable(t, depth)
+        if depth > 4 or not t or seen[t] then return end
+        seen[t] = true
+        if includeTables then add(t) end
+        for k, v in pairs(t) do
+            local tv = type(v)
+            if tv == "function" then add(v)
+            elseif tv == "userdata" then add(v)
+            elseif tv == "table" and depth < 4 then scrapeTable(v, depth + 1) end
+            local tk = type(k)
+            if tk == "function" then add(k)
+            elseif tk == "table" and depth < 4 then scrapeTable(k, depth + 1) end
+        end
+    end
+    scrapeTable(env, 0); scrapeTable(getfenv(0), 0); scrapeTable(_G, 0)
+    if type(shared) == "table" then scrapeTable(shared, 0) end
+    if type(proxied) == "table" then
+        for proxy, data in pairs(proxied) do
+            if type(proxy) == "userdata" then add(proxy) end
+            if type(data) == "table" then
+                if type(data.object) == "userdata" then add(data.object) end
+                if type(data.meta) == "table" then
+                    if includeTables then add(data.meta) end
+                    for _, v in pairs(data.meta) do if type(v) == "function" then add(v) end end
+                end
+                if type(data.namecalls) == "table" then
+                    for _, v in pairs(data.namecalls) do if type(v) == "function" then add(v) end end
+                end
+            end
+        end
+    end
+    if type(objects) == "table" then for obj in pairs(objects) do if type(obj) == "userdata" then add(obj) end end end
+    if type(clonerefs) == "table" then
+        for proxy, obj in pairs(clonerefs) do
+            if type(proxy) == "userdata" then add(proxy) end
+            if type(obj)   == "userdata" then add(obj)   end
+        end
+    end
+    if type(debug) == "table" and type(debug.getregistry) == "function" then
+        local ok, registry = pcall(debug.getregistry)
+        if ok and type(registry) == "table" then
+            for _, v in pairs(registry) do
+                if type(v) == "thread" then
+                    local okE, fenv = pcall(getfenv, v)
+                    if okE and type(fenv) == "table" then scrapeTable(fenv, 0) end
+                end
+            end
+        end
+    end
+    local ok, descendants = pcall(function() return game:GetDescendants() end)
+    if ok and type(descendants) == "table" then for _, v in ipairs(descendants) do if type(v) == "userdata" then add(v) end end end
+    if type(_executorClosures) == "table" then for f in pairs(_executorClosures) do if type(f) == "function" then add(f) end end end
+    local services = { "Workspace","Players","RunService","UserInputService","ReplicatedStorage","ReplicatedFirst","StarterGui","StarterPack","StarterPlayer","Teams","SoundService","TweenService","PathfindingService","CollectionService","ContentProvider","ContextActionService","GuiService","HttpService","InsertService","Lighting","LocalizationService","MarketplaceService","PhysicsService","PolicyService","ScriptContext","Selection","Stats","TeleportService","TextService","VirtualInputManager" }
+    for _, svcName in ipairs(services) do
+        local okS, svc = pcall(function() return game:GetService(svcName) end)
+        if okS and svc then
+            add(svc)
+            local okD, descs = pcall(function() return svc:GetDescendants() end)
+            if okD then for _, v in ipairs(descs) do add(v) end end
+        end
+    end
+    return results
+end
+getgenv().filtergc = function(typeName, options)
+    assert(type(typeName) == "string", "invalid argument #1 to 'filtergc' (string expected, got " .. type(typeName) .. ")")
+    options = type(options) == "table" and options or {}
+    local predicate  = type(options.filter)     == "function" and options.filter     or nil
+    local methodName = type(options.methodName) == "string"   and options.methodName or nil
+    local reg, seen, results = getgenv().getreg(), {}, {}
+    for _, v in pairs(reg) do
+        local t = type(v)
+        if t == typeName and not seen[v] then
+            seen[v] = true
+            local keep = true
+            if methodName then local ok, has = pcall(function() return type(v[methodName]) == "function" end); if not (ok and has) then keep = false end end
+            if keep and predicate then local ok, pass = pcall(predicate, v); if not (ok and pass) then keep = false end end
+            if keep then table.insert(results, v) end
+        end
+    end
+    if typeName == "function" then
+        for f in pairs(_executorClosures) do
+            if not seen[f] then
+                seen[f] = true
+                local pass = true
+                if predicate then local ok, r = pcall(predicate, f); pass = ok and r end
+                if pass then table.insert(results, f) end
+            end
+        end
+    end
+    return results
+end
+getgenv().getsenv = function(script_instance)
+    assert(typeof(script_instance) == "Instance", "invalid argument #1 to 'getsenv' (Instance expected, got " .. typeof(script_instance) .. ")")
+    return setmetatable({ script = script_instance }, {
+        __index    = function(self, k) return rawget(self, k) or env[k] end,
+        __newindex = function(self, k, v) if not pcall(function() env[k] = v end) then rawset(self, k, v) end end,
+    })
+end
+getgenv().getcallingscript = function()
+    for lvl = 3, 0, -1 do
+        local f = debug.info(lvl, "f"); if not f then continue end
+        local ok, s = pcall(function() return rawget(getfenv(f), "script") end)
+        if ok and s and typeof(s) == "Instance" and s:IsA("BaseScript") then return s end
+    end
+    return nil
+end
+getgenv().getconnections = function(signal)
+    assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getconnections' (RBXScriptSignal expected, got " .. typeof(signal) .. ")", 2)
+    local connections = {}
+    if type(getconnections) == "function" then
+        local ok, result = pcall(getconnections, signal)
+        if ok and type(result) == "table" then
+            for _, nativeConn in ipairs(result) do
+                if type(nativeConn) == "table" then
+                    local proxy = setmetatable({
+                        Enabled = nativeConn.Enabled ~= false,
+                        ForeignState = false,
+                        LuaConnection = true,
+                        Function = nativeConn.Function,
+                        Thread = nativeConn.Thread or coroutine.create(function() end),
+                    }, {
+                        __index = nativeConn,
+                    })
+                    function proxy:Fire(...)
+                        if self.Enabled and self.Function then
+                            task.spawn(self.Function, ...)
+                        end
+                    end
+                    function proxy:Defer(...)
+                        if self.Enabled and self.Function then
+                            task.defer(self.Function, ...)
+                        end
+                    end
+                    function proxy:Disable()
+                        self.Enabled = false
+                    end
+                    function proxy:Enable()
+                        self.Enabled = true
+                    end
+                    function proxy:Disconnect()
+                        self.Enabled = false
+                        if nativeConn.Disconnect then
+                            nativeConn:Disconnect()
+                        end
+                    end
+                    table.insert(connections, proxy)
+                end
+            end
+            return connections
+        end
+    end
+    local testCallback = function() end
+    local testConnection = signal:Connect(testCallback)
+    if testConnection then
+        local proxy = {
+            Enabled = true,
+            ForeignState = false,
+            LuaConnection = true,
+            Function = testCallback,
+            Thread = coroutine.create(function() end),
+        }
+        function proxy:Fire(...)
+            if self.Enabled and self.Function then
+                task.spawn(self.Function, ...)
+            end
+        end
+        function proxy:Defer(...)
+            if self.Enabled and self.Function then
+                task.defer(self.Function, ...)
+            end
+        end
+        function proxy:Disable()
+            self.Enabled = false
+        end
+        function proxy:Enable()
+            self.Enabled = true
+        end
+        function proxy:Disconnect()
+            self.Enabled = false
+            testConnection:Disconnect()
+        end
+        table.insert(connections, proxy)
+    end
+    return connections
+end
+getgenv().getsignals = getgenv().getconnections
+local hookedFunctions = {}
+local oldWrappers = {}
+
+local function doRestore(fn)
+    local entry = hookedFunctions[fn]
+    if not entry then
+        return nil
+    end
+
+    local restored = entry.oldWrapper or entry.original
+    oldWrappers[entry.oldWrapper] = nil
+
+    if entry.previous then
+        hookedFunctions[fn] = entry.previous
+    else
+        hookedFunctions[fn] = nil
+    end
+
+    return restored
+end
+
+function hookfunction(original, hook)
+    assert(type(original) == "function", "arg #1 must be a function")
+    assert(type(hook) == "function", "arg #2 must be a function")
+
+    -- Check if we are restoring a hook by passing the old wrapper as the hook
+    local isRestoringWithWrapper = oldWrappers[hook]
+    if isRestoringWithWrapper then
+        local targetOriginal = isRestoringWithWrapper
+        local entry = hookedFunctions[targetOriginal]
+        if entry and entry.oldWrapper == hook then
+            doRestore(targetOriginal)
+            return hook
+        end
+    end
+
+    local previousEntry = hookedFunctions[original]
+
+    -- In pure Luau, we create a Lua closure to act as the old function wrapper.
+    -- It temporarily removes the hook state so it can call the true original function
+    -- without triggering the hook recursively.
+    local oldWrapper = function(...)
+        local currentEntry = hookedFunctions[original]
+        hookedFunctions[original] = nil
+
+        local results = table.pack(original(...))
+
+        hookedFunctions[original] = currentEntry
+
+        return table.unpack(results, 1, results.n)
+    end
+
+    -- If this environment has `newcclosure` (like standard executor environments),
+    -- we use it to make the Luau closure behave like a C closure to bypass `iscclosure` checks.
+    if type(newcclosure) == "function" then
+        oldWrapper = newcclosure(oldWrapper)
+    end
+
+    local entry = {
+        type = "LuaFunction",
+        original = original,
+        hook = hook,
+        oldWrapper = oldWrapper,
+        previous = previousEntry,
+    }
+
+    hookedFunctions[original] = entry
+    oldWrappers[oldWrapper] = original
+
+    return oldWrapper
+end
+
+function restorefunction(fn)
+    assert(type(fn) == "function", "arg #1 must be a function")
+
+    local entry = hookedFunctions[fn]
+    if not entry then
+        warn("restorefunction: function is not hooked")
+        return nil
+    end
+
+    return doRestore(fn)
+end
+
+function ishookedfunction(fn)
+    assert(type(fn) == "function", "invalid argument #1 to 'ishookedfunction' (function expected, got " .. type(fn) .. ")")
+    return hookedFunctions[fn] ~= nil
+end
+
+function getoriginalfunction(fn)
+    assert(type(fn) == "function", "invalid argument #1 to 'getoriginalfunction' (function expected, got " .. type(fn) .. ")")
+
+    local entry = hookedFunctions[fn]
+    if entry then
+        return entry.oldWrapper or entry.original
+    end
+
+    -- If it's not hooked, the original function is just the function itself
+    return fn
+end
+
+-- Apply to environment
+-- Make sure `env` is defined in your scope, or replace `env` with `_G` or `getfenv()` depending on your setup
+getgenv().hookfunction = hookfunction
+getgenv().hookfunc = hookfunction
+getgenv().replaceclosure = hookfunction
+getgenv().restorefunction = restorefunction
+getgenv().ishookedfunction = ishookedfunction
+getgenv().isfunctionhooked = ishookedfunction
+getgenv().getoriginalfunction = getoriginalfunction
