@@ -933,3 +933,174 @@ getgenv().restorefunction = restorefunction
 getgenv().ishookedfunction = ishookedfunction
 getgenv().isfunctionhooked = ishookedfunction
 getgenv().getoriginalfunction = getoriginalfunction
+local cache = {cached = {}}
+local cacheproxied = {}
+local cacheobjects = {}
+local cacheclonerefs = {}
+local cacheinvalidated = {} 
+
+local function isModifiableParent(instance)
+	if instance:IsA("ServiceProvider") or instance:FindFirstAncestorOfClass("ServiceProvider") then
+		return false
+	end
+	local parent = instance
+	while parent do
+		if parent == game:GetService("CoreGui") or parent == game:GetService("CorePackages") then
+			return false
+		end
+		parent = parent.Parent
+	end
+	return true
+end
+
+function cache.iscached(t)
+	if cache.cached[t] == 'r' then return false end
+	local data = cacheproxied[t]
+	if data then return not data.dead end
+	if rtypeof(t) == "Instance" and cacheobjects[t] then return true end
+	return true
+end
+
+function cache.invalidate(t)
+	cache.cached[t] = 'r'
+	local data = proxied[t]
+	local rawObj
+	if data then
+		rawObj = data.object
+		data.dead = true
+		objects[rawObj] = nil
+        for name, proxy in pairs(_serviceProxyCache) do
+			if proxy == t then
+				_serviceProxyCache[name] = nil
+				break
+			end
+		end
+	elseif rtypeof(t) == "Instance" then
+		rawObj = t
+		local d = objects[t]
+		if d then
+			d.dead = true
+			objects[t] = nil
+		end
+		for name, proxy in pairs(_serviceProxyCache) do
+			if proxy == t then
+				_serviceProxyCache[name] = nil
+				break
+			end
+		end
+	end
+	pcall(function()
+		if rawObj and isModifiableParent(rawObj) then
+			rawObj.Parent = nil
+		end
+	end)
+end
+
+function cache.validate(obj)
+	local realObj = obj
+	if cacheproxied[obj] then
+		realObj = cacheproxied[obj].object
+	end
+	cacheinvalidated[realObj] = nil
+	if not cacheobjects[realObj] then
+		cacheproxyobject(realObj)
+	else
+		local data = cacheobjects[realObj]
+		if data then
+			data.dead = false
+		end
+	end
+end
+
+function cache.replace(x, y)
+	local xdata = cacheproxied[x]
+	local ydata = cacheproxied[y]
+
+	local yobj
+	if ydata and not ydata.dead then
+		yobj = ydata.object
+	elseif cacheclonerefs[y] then
+		yobj = cacheclonerefs[y]
+	elseif typeof(y) == "Instance" then
+		yobj = y
+	end
+
+	local xobj
+	if xdata and not xdata.dead then
+		xobj = xdata.object
+	elseif cacheclonerefs[x] then
+		xobj = cacheclonerefs[x]
+	elseif typeof(x) == "Instance" then
+		xobj = x
+	end
+
+	if not xobj or not yobj then
+		return false
+	end
+
+	if xdata then
+		if xdata.object then
+			cacheobjects[xdata.object] = nil
+		end
+		xdata.object = yobj
+		cacheobjects[yobj] = xdata
+	elseif typeof(x) == "Instance" and not cacheproxied[x] then
+		local newdata = {
+			object = yobj,
+			proxy = x,
+			meta = getmetatable(x),
+			namecalls = {},
+			dead = false
+		}
+		cacheproxied[x] = newdata
+		cacheobjects[yobj] = newdata
+	end
+
+	if ydata and ydata.object then
+		cacheobjects[ydata.object] = ydata
+	end
+
+	cache.cached[x] = nil
+
+	pcall(function()
+		if yobj and isModifiableParent(yobj) and xobj and isModifiableParent(xobj) then
+			yobj.Parent = xobj.Parent
+			yobj.Name = xobj.Name
+			xobj.Parent = nil
+		end
+	end)
+
+	return true
+end
+function cacheproxyobject(obj, namecalls)
+	if cacheinvalidated[obj] then
+		return obj 
+	end
+	
+	if cacheobjects[obj] then
+		local data = cacheobjects[obj]
+		if data.dead then
+			return obj 
+		end
+		return data.proxy
+	end
+	
+	namecalls = namecalls or {}
+	local proxy = newproxy(true)
+	local meta = getmetatable(proxy)
+	meta.__metatable = getmetatable(obj)
+
+	local data = {}
+	data.object = obj
+	data.proxy = proxy
+	data.meta = meta
+	data.namecalls = namecalls
+	data.dead = false
+
+	cacheproxied[proxy] = data
+	cacheobjects[obj] = data
+	return proxy
+end
+
+getgenv().cache = cache
+
