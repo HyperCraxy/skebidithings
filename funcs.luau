@@ -335,7 +335,7 @@ do
         local out = {}
         for _, v in ipairs(game:GetDescendants()) do
             if v.ClassName == "Actor" then
-                out[#out + 1] = v
+                out[#out + 1] = (type(ToProxy) == "function" and ToProxy(v)) or v
             end
         end
         return out
@@ -373,6 +373,43 @@ do
         return _parallel_states[targetThread] == true
     end
 
+    if type(task) == "table" then
+        local function setTaskMethod(methodName, func)
+            local unlocked = false
+            if type(setreadonly) == "function" then
+                unlocked = pcall(setreadonly, task, false)
+            end
+            pcall(function()
+                task[methodName] = func
+            end)
+            if unlocked and type(setreadonly) == "function" then
+                pcall(setreadonly, task, true)
+            end
+        end
+
+        local function hookTaskMethod(methodName)
+            local nativeFunc = task[methodName]
+            if type(nativeFunc) == "function" then
+                setTaskMethod(methodName, function(...)
+                    if rawget(getgenv(), "__actor_parallel__") == true then
+                        return true
+                    end
+                    return nativeFunc(...)
+                end)
+            else
+                setTaskMethod(methodName, function(...)
+                    if rawget(getgenv(), "__actor_parallel__") == true then
+                        return true
+                    end
+                    error(methodName .. "() may only be called from a script that is descendant of an Actor", 2)
+                end)
+            end
+        end
+
+        hookTaskMethod("desynchronize")
+        hookTaskMethod("synchronize")
+    end
+
     getgenv().run_on_actor = function(actor, fn_or_source, ...)
         assert(typeof(actor) == "Instance", "bad argument #1 to 'run_on_actor' (Instance expected)")
         assert(actor.ClassName == "Actor", "bad argument #1 to 'run_on_actor' (Actor expected)")
@@ -384,7 +421,18 @@ do
 
         local function run_parallel(fn)
             local co = coroutine.create(function(...)
+                local running = coroutine.running()
+                _parallel_states[running] = true
+                local g = getgenv()
+                local prev = rawget(g, "__actor_parallel__")
+                rawset(g, "__actor_parallel__", true)
                 local ok, a, b, c, d, e = pcall(fn, ...)
+                if prev == nil then
+                    rawset(g, "__actor_parallel__", nil)
+                else
+                    rawset(g, "__actor_parallel__", prev)
+                end
+                _parallel_states[running] = nil
                 if not ok then
                     error(a, 0)
                 end
@@ -392,6 +440,7 @@ do
             end)
 
             local ok, a, b, c, d, e = coroutine.resume(co, table.unpack(args, 1, argc))
+            _parallel_states[co] = nil
             if not ok then
                 error(a, 2)
             end
@@ -401,43 +450,18 @@ do
         if type(fn_or_source) == "function" then
             return run_parallel(fn_or_source)
         elseif type(fn_or_source) == "string" then
-            local src = fn_or_source
-            src = string.gsub(src, "task%.desynchronize%s*%([^%)]*%)", "_mock_desynchronize()")
-            src = string.gsub(src, "task%.synchronize%s*%([^%)]*%)", "_mock_synchronize()")
-            
-            local chunk, err = getgenv().loadstring(src, "run_on_actor")
+            local chunk, err = getgenv().loadstring(fn_or_source, "run_on_actor")
             if not chunk then
                 error(err, 2)
             end
-            
-            local g = getgenv()
-            local prev_desync = rawget(g, "_mock_desynchronize")
-            local prev_sync = rawget(g, "_mock_synchronize")
-            
-            g._mock_desynchronize = function()
-                local running = coroutine.running()
-                _parallel_states[running] = true
-                rawset(g, "__actor_parallel__", true)
-            end
-            
-            g._mock_synchronize = function()
-                local running = coroutine.running()
-                _parallel_states[running] = nil
-                rawset(g, "__actor_parallel__", nil)
-            end
-            
-            local results = table.pack(run_parallel(chunk))
-            
-            if prev_desync == nil then g._mock_desynchronize = nil else g._mock_desynchronize = prev_desync end
-            if prev_sync == nil then g._mock_synchronize = nil else g._mock_synchronize = prev_sync end
-            
-            return table.unpack(results, 1, results.n)
+            return run_parallel(chunk)
         else
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
     end
     getgenv().runonactor = getgenv().run_on_actor
 end
+
 
 getgenv().cansignalreplicate = function(signal)
     assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'cansignalreplicate' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
