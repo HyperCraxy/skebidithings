@@ -300,7 +300,7 @@ do
         local out = {}
         for _, v in ipairs(game:GetDescendants()) do
             if v.ClassName == "Actor" then
-                out[#out + 1] = v
+                out[#out + 1] = (type(ToProxy) == "function" and ToProxy(v)) or v
             end
         end
         return out
@@ -338,6 +338,43 @@ do
         return _parallel_states[targetThread] == true
     end
 
+    if type(task) == "table" then
+        local function setTaskMethod(methodName, func)
+            local unlocked = false
+            if type(setreadonly) == "function" then
+                unlocked = pcall(setreadonly, task, false)
+            end
+            pcall(function()
+                task[methodName] = func
+            end)
+            if unlocked and type(setreadonly) == "function" then
+                pcall(setreadonly, task, true)
+            end
+        end
+
+        local function hookTaskMethod(methodName)
+            local nativeFunc = task[methodName]
+            if type(nativeFunc) == "function" then
+                setTaskMethod(methodName, function(...)
+                    if rawget(getgenv(), "__actor_parallel__") == true then
+                        return true
+                    end
+                    return nativeFunc(...)
+                end)
+            else
+                setTaskMethod(methodName, function(...)
+                    if rawget(getgenv(), "__actor_parallel__") == true then
+                        return true
+                    end
+                    error(methodName .. "() may only be called from a script that is descendant of an Actor", 2)
+                end)
+            end
+        end
+
+        hookTaskMethod("desynchronize")
+        hookTaskMethod("synchronize")
+    end
+
     getgenv().run_on_actor = function(actor, fn_or_source, ...)
         assert(typeof(actor) == "Instance", "bad argument #1 to 'run_on_actor' (Instance expected)")
         assert(actor.ClassName == "Actor", "bad argument #1 to 'run_on_actor' (Actor expected)")
@@ -349,7 +386,18 @@ do
 
         local function run_parallel(fn)
             local co = coroutine.create(function(...)
+                local running = coroutine.running()
+                _parallel_states[running] = true
+                local g = getgenv()
+                local prev = rawget(g, "__actor_parallel__")
+                rawset(g, "__actor_parallel__", true)
                 local ok, a, b, c, d, e = pcall(fn, ...)
+                if prev == nil then
+                    rawset(g, "__actor_parallel__", nil)
+                else
+                    rawset(g, "__actor_parallel__", prev)
+                end
+                _parallel_states[running] = nil
                 if not ok then
                     error(a, 0)
                 end
@@ -357,6 +405,7 @@ do
             end)
 
             local ok, a, b, c, d, e = coroutine.resume(co, table.unpack(args, 1, argc))
+            _parallel_states[co] = nil
             if not ok then
                 error(a, 2)
             end
@@ -366,43 +415,18 @@ do
         if type(fn_or_source) == "function" then
             return run_parallel(fn_or_source)
         elseif type(fn_or_source) == "string" then
-            local src = fn_or_source
-            src = string.gsub(src, "task%.desynchronize%s*%([^%)]*%)", "_mock_desynchronize()")
-            src = string.gsub(src, "task%.synchronize%s*%([^%)]*%)", "_mock_synchronize()")
-            
-            local chunk, err = getgenv().loadstring(src, "run_on_actor")
+            local chunk, err = getgenv().loadstring(fn_or_source, "run_on_actor")
             if not chunk then
                 error(err, 2)
             end
-            
-            local g = getgenv()
-            local prev_desync = rawget(g, "_mock_desynchronize")
-            local prev_sync = rawget(g, "_mock_synchronize")
-            
-            g._mock_desynchronize = function()
-                local running = coroutine.running()
-                _parallel_states[running] = true
-                rawset(g, "__actor_parallel__", true)
-            end
-            
-            g._mock_synchronize = function()
-                local running = coroutine.running()
-                _parallel_states[running] = nil
-                rawset(g, "__actor_parallel__", nil)
-            end
-            
-            local results = table.pack(run_parallel(chunk))
-            
-            if prev_desync == nil then g._mock_desynchronize = nil else g._mock_desynchronize = prev_desync end
-            if prev_sync == nil then g._mock_synchronize = nil else g._mock_synchronize = prev_sync end
-            
-            return table.unpack(results, 1, results.n)
+            return run_parallel(chunk)
         else
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
     end
     getgenv().runonactor = getgenv().run_on_actor
 end
+
 
 getgenv().cansignalreplicate = function(signal)
     assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'cansignalreplicate' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
@@ -680,3 +704,78 @@ getgenv().saveinstance = function(options)
     return _saveinstance(options)
 end
 getgenv().savegame = getgenv().saveinstance
+local _menv_cache = setmetatable({}, { __mode = "k" })
+
+getgenv().getmenv = function()
+    local currentThread = coroutine.running()
+    if _menv_cache[currentThread] then
+        return _menv_cache[currentThread]
+    end
+    local level = 2 
+    local success = false
+    local moduleEnv = nil
+    while level < 10 do
+        local info = debug.getinfo(level)
+        if not info then break end
+        local func = info.func
+        if func and type(func) == "function" then
+            local ok, env = pcall(function()
+                return getfenv(func)
+            end)
+            
+            if ok and env and type(env) == "table" then
+                moduleEnv = env
+                success = true
+                break
+            end
+        end
+        
+        level = level + 1
+    end 
+    if success and moduleEnv then
+        _menv_cache[currentThread] = moduleEnv
+        return moduleEnv
+    end  
+    local fallbackEnv = _G
+    _menv_cache[currentThread] = fallbackEnv
+    return fallbackEnv
+end
+getgenv().getpropertychangedsignal = function(instance, property)
+    assert(typeof(instance) == "Instance", "invalid argument #1 to 'getpropertychangedsignal' (Instance expected, got " .. typeof(instance) .. ")")
+    assert(type(property) == "string",     "invalid argument #2 to 'getpropertychangedsignal' (string expected, got " .. type(property) .. ")")
+    return instance:GetPropertyChangedSignal(property)
+end
+getgenv().getsimulationradius = function()
+    local radius, maxRadius = 0, 0
+    local plr = game:GetService("Players").LocalPlayer
+    if plr then
+        local ok1, v1 = pcall(function() return plr.SimulationRadius end)
+        if ok1 and type(v1) == "number" then radius = v1 end
+        local ok2, v2 = pcall(function() return plr.MaximumSimulationRadius end)
+        if ok2 and type(v2) == "number" then
+            maxRadius = v2
+        else
+            local gethiddenprop = gethiddenproperty or getgenv().gethiddenprop
+            if type(gethiddenprop) == "function" then
+                local ok3, v3 = pcall(gethiddenprop, plr, "MaximumSimulationRadius")
+                if ok3 and type(v3) == "number" then maxRadius = v3 end
+            end
+        end
+    end
+    return radius, maxRadius
+end
+
+getgenv().setsimulationradius = function(radius, maxRadius)
+    assert(type(radius) == "number", "invalid argument #1 to 'setsimulationradius' (number expected)")
+    local plr = game:GetService("Players").LocalPlayer
+    if plr then
+        pcall(function() plr.SimulationRadius = radius end)
+        if maxRadius then
+            local ok = pcall(function() plr.MaximumSimulationRadius = maxRadius end)
+            if not ok then
+                local sethiddenprop = sethiddenproperty or getgenv().sethiddenprop
+                if type(sethiddenprop) == "function" then pcall(sethiddenprop, plr, "MaximumSimulationRadius", maxRadius) end
+            end
+        end
+    end
+end
