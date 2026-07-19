@@ -194,3 +194,105 @@ getgenv().decompile = function(scr)
 
     return res.Body
 end
+local function makeSignal()
+    local threads = {}
+    local function reusableThreadCall(callback, thread, ...) callback(...); table.insert(threads, thread) end
+    local function reusableThread() while true do reusableThreadCall(coroutine.yield()) end end
+    local function disconnect(connection)
+        if not connection.Connected then return end
+        connection.Connected = nil
+        local signal, previous, next = connection.Signal, connection.Previous, connection.Next
+        if previous then previous.Next = next else signal.Tail = next end
+        if next then next.Previous = previous else signal.Head = previous end
+    end
+    local Signal = {}
+    Signal.__index = Signal
+    Signal.Connect = function(signal, callback)
+        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Connect' (function expected, got " .. type(callback) .. ")")
+        local head = signal.Head
+        local connection = { Signal = signal, Previous = head, Callback = callback, Connected = true, Disconnect = disconnect }
+        if head then head.Next = connection else signal.Tail = connection end
+        signal.Head = connection
+        return connection
+    end
+    Signal.Once = function(signal, callback)
+        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Once' (function expected, got " .. type(callback) .. ")")
+        local head = signal.Head
+        local connection
+        connection = {
+            Signal = signal, Previous = head,
+            Callback = function(...)
+                if not connection.Connected then return end
+                connection.Connected = false
+                local previous, next = connection.Previous, connection.Next
+                if previous then previous.Next = next else signal.Tail = next end
+                if next then next.Previous = previous else signal.Head = previous end
+                callback(...)
+            end,
+            Connected = true, Disconnect = disconnect
+        }
+        if head then head.Next = connection else signal.Tail = connection end
+        signal.Head = connection
+        return connection
+    end
+    Signal.Wait = function(signal)
+        local thread = coroutine.running()
+        local head = signal.Head
+        local connection
+        connection = {
+            Signal = signal, Previous = head, Connected = true, Disconnect = disconnect,
+            Callback = function(...)
+                if not connection.Connected then return end
+                connection.Connected = false
+                local previous, next = connection.Previous, connection.Next
+                if previous then previous.Next = next else signal.Tail = next end
+                if next then next.Previous = previous else signal.Head = previous end
+                if coroutine.status(thread) == "suspended" then task.spawn(thread, ...) end
+            end
+        }
+        if head then head.Next = connection else signal.Tail = connection end
+        signal.Head = connection
+        return coroutine.yield()
+    end
+    Signal.Fire = function(signal, ...)
+        local connection = signal.Tail
+        while connection do
+            local nextConn = connection.Next
+            if connection.Callback then
+                local length = #threads
+                if length == 0 then
+                    local thread = coroutine.create(reusableThread)
+                    coroutine.resume(thread)
+                    task.spawn(thread, connection.Callback, thread, ...)
+                else
+                    local thread = threads[length]
+                    threads[length] = nil
+                    task.spawn(thread, connection.Callback, thread, ...)
+                end
+            end
+            connection = nextConn
+        end
+    end
+    Signal.DisconnectAll = function(signal)
+        local connection = signal.Tail
+        while connection do
+            local nextConnection = connection.Next
+            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
+            connection = nextConnection
+        end
+        signal.Tail = nil; signal.Head = nil
+    end
+    Signal.Destroy = function(signal)
+        local connection = signal.Tail
+        while connection do
+            local nextConnection = connection.Next
+            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
+            connection = nextConnection
+        end
+        signal.Tail = nil; signal.Head = nil
+    end
+    return setmetatable({}, Signal)
+end
+
+getgenv().Signal = { new = makeSignal }
+getgenv().makeSignal = makeSignal
