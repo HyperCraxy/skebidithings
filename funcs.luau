@@ -552,6 +552,7 @@ getgenv().getsignalargumentsinfo = function(signal)
     return { { Type = "any", Name = "..." } }
 end
 
+
 getgenv().getsignalwhitelist = function()
     return {
         { Event = "Touched", Parent = "BasePart" },
@@ -723,3 +724,44 @@ getgenv().saveinstance = function(options)
     return _saveinstance(options)
 end
 getgenv().savegame = getgenv().saveinstance
+local _menv_cache = setmetatable({}, { __mode = "k" })
+
+getgenv().getmenv = function()
+    local currentThread = coroutine.running()
+    if _menv_cache[currentThread] then
+        return _menv_cache[currentThread]
+    end
+    local level = 2 
+    local success = false
+    local moduleEnv = nil
+    while level < 10 do
+        local info = debug.getinfo(level)
+        if not info then break end
+        local func = info.func
+        if func and type(func) == "function" then
+            local ok, env = pcall(function()
+                return getfenv(func)
+            end)
+            
+            if ok and env and type(env) == "table" then
+                moduleEnv = env
+                success = true
+                break
+            end
+        end
+        
+        level = level + 1
+    end 
+    if success and moduleEnv then
+        _menv_cache[currentThread] = moduleEnv
+        return moduleEnv
+    end  
+    local fallbackEnv = _G
+    _menv_cache[currentThread] = fallbackEnv
+    return fallbackEnv
+end
+getgenv().setnamecallmethod = function(method)
+    assert(type(method) == "string", "invalid argument #1 to 'setnamecallmethod' (string expected, got " .. type(method) .. ")")
+    local thread = coroutine.running()
+    rawset(cachedmethods, thread, method)
+end
