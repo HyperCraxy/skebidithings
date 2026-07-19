@@ -682,7 +682,6 @@ local function makeSignal()
             connection = nextConnection
         end
         signal.Tail = nil; signal.Head = nil
-        setmetatable(signal, nil)
     end
     return setmetatable({}, Signal)
 end
@@ -690,9 +689,18 @@ end
 getgenv().Signal    = { new = makeSignal }
 getgenv().makeSignal = makeSignal
 getgenv().setsimulationradius = function(radius, maxRadius)
-    radius = tonumber(radius); maxRadius = tonumber(maxRadius) or radius
     assert(type(radius) == "number", "invalid argument #1 to 'setsimulationradius' (number expected)")
-    plr.SimulationRadius = radius; plr.MaximumSimulationRadius = maxRadius
+    local plr = game:GetService("Players").LocalPlayer
+    if plr then
+        pcall(function() plr.SimulationRadius = radius end)
+        if maxRadius then
+            local ok = pcall(function() plr.MaximumSimulationRadius = maxRadius end)
+            if not ok then
+                local sethiddenprop = sethiddenproperty or getgenv().sethiddenprop
+                if type(sethiddenprop) == "function" then pcall(sethiddenprop, plr, "MaximumSimulationRadius", maxRadius) end
+            end
+        end
+    end
 end
 
 getgenv().getsimulationradius = function()
