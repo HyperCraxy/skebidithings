@@ -385,8 +385,8 @@ do
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
     end
-    getgenv().runonactor = getgenv().run_on_actor
-    getgenv().runonactor = getgenv().run_on_actors
+getgenv().run_on_actors = getgenv().run_on_actor
+getgenv().runonactor = getgenv().run_on_actor
 end
 
 
