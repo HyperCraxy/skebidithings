@@ -3,166 +3,17 @@ local commonutil = common.CommonUtil
 local constants = commonutil:Clone()
 constants.Name = "Constants"
 constants.Parent = common
-
-local loadfile = function(path, chunkname)
-    local success, content = pcall(readfile, path)
-    if not success or not content then
-        return nil, "cannot open " .. tostring(path) .. ": No such file or directory"
-    end
-    
-    local chunk_name = chunkname or ("@" .. path)
-    return loadstring(content, chunk_name)
-end
-
-local dofile = function(path)
-    local func, err = loadfile(path)
-    if not func then
-        error(err, 2)
-    end
-    return func()
-end
-
-getgenv().loadfile = loadfile
-getgenv().load_file = loadfile
-getgenv().loadfromfile = loadfile
-getgenv().load_from_file = loadfile
-
-getgenv().dofile = dofile
-getgenv().do_file = dofile
-
 if not getgenv().file then
     getgenv().file = {}
 end
-
-getgenv().file.load = loadfile
-getgenv().file.loadfile = loadfile
-getgenv().file.load_file = loadfile
-getgenv().file["do"] = dofile
-getgenv().file.dofile = dofile
-getgenv().file.do_file = dofile
-
 if not getgenv().folder then
     getgenv().folder = {}
 end
-
 if not getgenv().folder then
     getgenv().folder = {}
 end
-
 local game = game
 local Instance = Instance
-
-local http = {}
-http.request = request or http_request or syn_request
-
-getgenv().http = http
-getgenv().syn = getgenv().syn or {}
-getgenv().syn.request = http.request
-
-local function makeSignal()
-    local threads = {}
-    local function reusableThreadCall(callback, thread, ...) callback(...); table.insert(threads, thread) end
-    local function reusableThread() while true do reusableThreadCall(coroutine.yield()) end end
-    local function disconnect(connection)
-        if not connection.Connected then return end
-        connection.Connected = nil
-        local signal, previous, next = connection.Signal, connection.Previous, connection.Next
-        if previous then previous.Next = next else signal.Tail = next end
-        if next then next.Previous = previous else signal.Head = previous end
-    end
-    local Signal = {}
-    Signal.__index = Signal
-    Signal.Connect = function(signal, callback)
-        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Connect' (function expected, got " .. type(callback) .. ")")
-        local head = signal.Head
-        local connection = { Signal = signal, Previous = head, Callback = callback, Connected = true, Disconnect = disconnect }
-        if head then head.Next = connection else signal.Tail = connection end
-        signal.Head = connection
-        return connection
-    end
-    Signal.Once = function(signal, callback)
-        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Once' (function expected, got " .. type(callback) .. ")")
-        local head = signal.Head
-        local connection
-        connection = {
-            Signal = signal, Previous = head,
-            Callback = function(...)
-                if not connection.Connected then return end
-                connection.Connected = false
-                local previous, next = connection.Previous, connection.Next
-                if previous then previous.Next = next else signal.Tail = next end
-                if next then next.Previous = previous else signal.Head = previous end
-                callback(...)
-            end,
-            Connected = true, Disconnect = disconnect
-        }
-        if head then head.Next = connection else signal.Tail = connection end
-        signal.Head = connection
-        return connection
-    end
-    Signal.Wait = function(signal)
-        local thread = coroutine.running()
-        local head = signal.Head
-        local connection
-        connection = {
-            Signal = signal, Previous = head, Connected = true, Disconnect = disconnect,
-            Callback = function(...)
-                if not connection.Connected then return end
-                connection.Connected = false
-                local previous, next = connection.Previous, connection.Next
-                if previous then previous.Next = next else signal.Tail = next end
-                if next then next.Previous = previous else signal.Head = previous end
-                if coroutine.status(thread) == "suspended" then task.spawn(thread, ...) end
-            end
-        }
-        if head then head.Next = connection else signal.Tail = connection end
-        signal.Head = connection
-        return coroutine.yield()
-    end
-    Signal.Fire = function(signal, ...)
-        local connection = signal.Tail
-        while connection do
-            local nextConn = connection.Next
-            if connection.Callback then
-                local length = #threads
-                if length == 0 then
-                    local thread = coroutine.create(reusableThread)
-                    coroutine.resume(thread)
-                    task.spawn(thread, connection.Callback, thread, ...)
-                else
-                    local thread = threads[length]
-                    threads[length] = nil
-                    task.spawn(thread, connection.Callback, thread, ...)
-                end
-            end
-            connection = nextConn
-        end
-    end
-    Signal.DisconnectAll = function(signal)
-        local connection = signal.Tail
-        while connection do
-            local nextConnection = connection.Next
-            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
-            connection = nextConnection
-        end
-        signal.Tail = nil; signal.Head = nil
-    end
-    Signal.Destroy = function(signal)
-        local connection = signal.Tail
-        while connection do
-            local nextConnection = connection.Next
-            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
-            connection = nextConnection
-        end
-        signal.Tail = nil; signal.Head = nil
-    end
-    return setmetatable({}, Signal)
-end
-
-getgenv().Signal = { new = makeSignal }
-getgenv().makeSignal = makeSignal
-
-
 local bit32 = bit32 or bit or {}
 
 if not bit32.band then
@@ -569,7 +420,6 @@ local _signalArgTypes = {
     MembershipChanged={"Player"}, PlayerAdded={"Player"}, PlayerRemoving={"Player"},
     CharacterAdded={"Model"}, CharacterRemoving={"Model"}, Fired={}, Event={},
 }
-
 getgenv().getsignalarguments = function(signal)
     assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getsignalarguments' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
     local sigStr  = tostring(signal)
@@ -589,7 +439,6 @@ getgenv().getsignalarguments = function(signal)
     if args and #args > 0 then return args end
     return { "any" }
 end
-
 getgenv().getsignalargumentsinfo = function(signal)
     assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getsignalargumentsinfo' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
     
@@ -782,7 +631,6 @@ local function makeSignal()
             connection = nextConnection
         end
         signal.Tail = nil; signal.Head = nil
-        setmetatable(signal, nil)
     end
     return setmetatable({}, Signal)
 end
