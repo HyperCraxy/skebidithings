@@ -1,3 +1,40 @@
+local loadfile = function(path, chunkname)
+    local success, content = pcall(readfile, path)
+    if not success or not content then
+        return nil, "cannot open " .. tostring(path) .. ": No such file or directory"
+    end
+    
+    local chunk_name = chunkname or ("@" .. path)
+    return loadstring(content, chunk_name)
+end
+
+local dofile = function(path)
+    local func, err = loadfile(path)
+    if not func then
+        error(err, 2)
+    end
+    return func()
+end
+
+getgenv().loadfile = loadfile
+getgenv().load_file = loadfile
+getgenv().loadfromfile = loadfile
+getgenv().load_from_file = loadfile
+
+getgenv().dofile = dofile
+getgenv().do_file = dofile
+
+if not getgenv().file then
+    getgenv().file = {}
+end
+
+getgenv().file.load = loadfile
+getgenv().file.loadfile = loadfile
+getgenv().file.load_file = loadfile
+getgenv().file["do"] = dofile
+getgenv().file.dofile = dofile
+getgenv().file.do_file = dofile
+
 if not getgenv().folder then
     getgenv().folder = {}
 end
@@ -12,108 +49,44 @@ getgenv().http = http
 getgenv().syn = getgenv().syn or {}
 getgenv().syn.request = http.request
 
-local function makeSignal()
-    local threads = {}
-    local function reusableThreadCall(callback, thread, ...) callback(...); table.insert(threads, thread) end
-    local function reusableThread() while true do reusableThreadCall(coroutine.yield()) end end
-    local function disconnect(connection)
-        if not connection.Connected then return end
-        connection.Connected = nil
-        local signal, previous, next = connection.Signal, connection.Previous, connection.Next
-        if previous then previous.Next = next else signal.Tail = next end
-        if next then next.Previous = previous else signal.Head = previous end
-    end
-    local Signal = {}
-    Signal.__index = Signal
-    Signal.Connect = function(signal, callback)
-        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Connect' (function expected, got " .. type(callback) .. ")")
-        local head = signal.Head
-        local connection = { Signal = signal, Previous = head, Callback = callback, Connected = true, Disconnect = disconnect }
-        if head then head.Next = connection else signal.Tail = connection end
-        signal.Head = connection
-        return connection
-    end
-    Signal.Once = function(signal, callback)
-        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Once' (function expected, got " .. type(callback) .. ")")
-        local head = signal.Head
-        local connection
-        connection = {
-            Signal = signal, Previous = head,
-            Callback = function(...)
-                if not connection.Connected then return end
-                connection.Connected = false
-                local previous, next = connection.Previous, connection.Next
-                if previous then previous.Next = next else signal.Tail = next end
-                if next then next.Previous = previous else signal.Head = previous end
-                callback(...)
-            end,
-            Connected = true, Disconnect = disconnect
-        }
-        if head then head.Next = connection else signal.Tail = connection end
-        signal.Head = connection
-        return connection
-    end
-    Signal.Wait = function(signal)
-        local thread = coroutine.running()
-        local head = signal.Head
-        local connection
-        connection = {
-            Signal = signal, Previous = head, Connected = true, Disconnect = disconnect,
-            Callback = function(...)
-                if not connection.Connected then return end
-                connection.Connected = false
-                local previous, next = connection.Previous, connection.Next
-                if previous then previous.Next = next else signal.Tail = next end
-                if next then next.Previous = previous else signal.Head = previous end
-                if coroutine.status(thread) == "suspended" then task.spawn(thread, ...) end
-            end
-        }
-        if head then head.Next = connection else signal.Tail = connection end
-        signal.Head = connection
-        return coroutine.yield()
-    end
-    Signal.Fire = function(signal, ...)
-        local connection = signal.Tail
-        while connection do
-            local nextConn = connection.Next
-            if connection.Callback then
-                local length = #threads
-                if length == 0 then
-                    local thread = coroutine.create(reusableThread)
-                    coroutine.resume(thread)
-                    task.spawn(thread, connection.Callback, thread, ...)
-                else
-                    local thread = threads[length]
-                    threads[length] = nil
-                    task.spawn(thread, connection.Callback, thread, ...)
-                end
-            end
-            connection = nextConn
-        end
-    end
-    Signal.DisconnectAll = function(signal)
-        local connection = signal.Tail
-        while connection do
-            local nextConnection = connection.Next
-            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
-            connection = nextConnection
-        end
-        signal.Tail = nil; signal.Head = nil
-    end
-    Signal.Destroy = function(signal)
-        local connection = signal.Tail
-        while connection do
-            local nextConnection = connection.Next
-            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
-            connection = nextConnection
-        end
-        signal.Tail = nil; signal.Head = nil
-    end
-    return setmetatable({}, Signal)
+local Signal = {}
+Signal.__index = Signal
+
+function Signal.new()
+    local self = setmetatable({}, Signal)
+    self._connections = {}
+    return self
 end
 
-getgenv().Signal    = { new = makeSignal }
-getgenv().makeSignal = makeSignal
+function Signal:Connect(callback)
+    local connection = {
+        Connected = true,
+        Callback = callback,
+        Disconnect = function(self)
+            self.Connected = false
+        end
+    }
+    table.insert(self._connections, connection)
+    return connection
+end
+
+function Signal:Fire(...)
+    for _, connection in ipairs(self._connections) do
+        if connection.Connected then
+            task.spawn(connection.Callback, ...)
+        end
+    end
+end
+
+function Signal:Wait()
+    local thread = coroutine.running()
+    local connection
+    connection = self:Connect(function(...)
+        connection:Disconnect()
+        task.spawn(thread, ...)
+    end)
+    return coroutine.yield()
+end
 
 local bit32 = bit32 or bit or {}
 
@@ -228,43 +201,6 @@ end
 getgenv().bit32 = bit32
 getgenv().bit = bit32
 
-getgenv().setsimulationradius = function(radius, maxRadius)
-    assert(type(radius) == "number", "invalid argument #1 to 'setsimulationradius' (number expected)")
-    local plr = game:GetService("Players").LocalPlayer
-    if plr then
-        pcall(function() plr.SimulationRadius = radius end)
-        if maxRadius then
-            local ok = pcall(function() plr.MaximumSimulationRadius = maxRadius end)
-            if not ok then
-                local sethiddenprop = sethiddenproperty or getgenv().sethiddenprop
-                if type(sethiddenprop) == "function" then pcall(sethiddenprop, plr, "MaximumSimulationRadius", maxRadius) end
-            end
-        end
-    end
-end
-
-getgenv().getsimulationradius = function()
-    local plr = game:GetService("Players").LocalPlayer
-    local radius, maxRadius = 0, 0
-    if plr then
-        local ok1, v1 = pcall(function() return plr.SimulationRadius end); if ok1 and type(v1) == "number" then radius = v1 end
-        local ok2, v2 = pcall(function() return plr.MaximumSimulationRadius end)
-        if ok2 and type(v2) == "number" then maxRadius = v2
-        else local ok3, v3 = pcall(getgenv().gethiddenproperty, plr, "MaximumSimulationRadius"); if ok3 and type(v3) == "number" then maxRadius = v3 end end
-    end
-    return radius, maxRadius
-end
-
-local _saveinstance = nil
-getgenv().saveinstance = function(options)
-    options = options or {}
-    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
-    print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
-    _saveinstance = _saveinstance or getgenv().loadstring(getgenv().HttpGet("https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau", true), "saveinstance")()
-    return _saveinstance(options)
-end
-getgenv().savegame = getgenv().saveinstance
-
 do
     local _comm_channels = {}
     local _next_comm_channel_id = 1
@@ -290,15 +226,20 @@ do
     local function newChannelEvent()
         local connections = {}
         local ev = {}
-
+        
         function ev:Connect(callback)
             assert(type(callback) == "function", "bad argument #1 to 'Connect' (function expected)", 2)
-            local conn = { Connected = true, Callback = callback }
-            function conn.Disconnect() conn.Connected = false end
+            local conn = {
+                Connected = true,
+                Callback = callback,
+            }
+            function conn.Disconnect()
+                conn.Connected = false
+            end
             connections[#connections + 1] = conn
             return conn
         end
-
+        
         function ev:Once(callback)
             assert(type(callback) == "function", "bad argument #1 to 'Once' (function expected)", 2)
             local conn
@@ -310,7 +251,7 @@ do
             end)
             return conn
         end
-
+        
         function ev:Wait()
             local thread = coroutine.running()
             local conn
@@ -322,15 +263,19 @@ do
             end)
             return coroutine.yield()
         end
-
+        
         function ev:Fire(...)
             local snapshot = {}
-            for i = 1, #connections do snapshot[i] = connections[i] end
+            for i = 1, #connections do
+                snapshot[i] = connections[i]
+            end
             for _, conn in ipairs(snapshot) do
-                if conn.Connected then task.spawn(conn.Callback, ...) end
+                if conn.Connected then
+                    task.spawn(conn.Callback, ...)
+                end
             end
         end
-
+        
         return ev
     end
 
@@ -339,22 +284,50 @@ do
         local queue = {}
         local channel = {}
         channel.Event = evt
-
+        
         function channel:Fire(...)
             local args = table.pack(...)
             local cloned = table.create(args.n)
-            for i = 1, args.n do cloned[i] = _actor_clone(args[i]) end
+            for i = 1, args.n do
+                cloned[i] = _actor_clone(args[i])
+            end
             queue[#queue + 1] = cloned[1]
             evt:Fire(table.unpack(cloned, 1, args.n))
         end
-
-        function channel:send(...) self:Fire(...); return true end
-        function channel:receive() if #queue == 0 then return nil end local first = queue[1]; table.remove(queue, 1); return first end
-        function channel:peek() return queue[1] end
-        function channel:clear() table.clear(queue) end
-        function channel:size() return #queue end
-        function channel:destroy() if self._id then _comm_channels[self._id] = nil end; table.clear(queue) end
-
+        
+        function channel:send(...)
+            self:Fire(...)
+            return true
+        end
+        
+        function channel:receive()
+            if #queue == 0 then
+                return nil
+            end
+            local first = queue[1]
+            table.remove(queue, 1)
+            return first
+        end
+        
+        function channel:peek()
+            return queue[1]
+        end
+        
+        function channel:clear()
+            table.clear(queue)
+        end
+        
+        function channel:size()
+            return #queue
+        end
+        
+        function channel:destroy()
+            if self._id then
+                _comm_channels[self._id] = nil
+            end
+            table.clear(queue)
+        end
+        
         return channel
     end
 
@@ -379,7 +352,9 @@ do
     getgenv().createcommchannel = getgenv().create_comm_channel
 
     getgenv().get_comm_channel = function(id)
-        if id == nil then return nil end
+        if id == nil then
+            return nil
+        end
         return _comm_channels[tonumber(id)]
     end
     getgenv().getcommchannel = getgenv().get_comm_channel
@@ -392,35 +367,10 @@ do
             end
             return rawget(getgenv(), "__actor_parallel__") == true
         end
-        if type(targetThread) ~= "thread" then return false end
+        if type(targetThread) ~= "thread" then
+            return false
+        end
         return _parallel_states[targetThread] == true
-    end
-
-    if type(task) == "table" then
-        local function setTaskMethod(methodName, func)
-            local unlocked = false
-            if type(setreadonly) == "function" then unlocked = pcall(setreadonly, task, false) end
-            pcall(function() task[methodName] = func end)
-            if unlocked and type(setreadonly) == "function" then pcall(setreadonly, task, true) end
-        end
-
-        local function hookTaskMethod(methodName)
-            local nativeFunc = task[methodName]
-            if type(nativeFunc) == "function" then
-                setTaskMethod(methodName, function(...)
-                    if rawget(getgenv(), "__actor_parallel__") == true then return true end
-                    return nativeFunc(...)
-                end)
-            else
-                setTaskMethod(methodName, function(...)
-                    if rawget(getgenv(), "__actor_parallel__") == true then return true end
-                    error(methodName .. "() may only be called from a script that is descendant of an Actor", 2)
-                end)
-            end
-        end
-
-        hookTaskMethod("desynchronize")
-        hookTaskMethod("synchronize")
     end
 
     getgenv().run_on_actor = function(actor, fn_or_source, ...)
@@ -428,34 +378,60 @@ do
         assert(actor.ClassName == "Actor", "bad argument #1 to 'run_on_actor' (Actor expected)")
         local argc = select("#", ...)
         local args = table.pack(...)
-        for i = 1, argc do args[i] = _actor_clone(args[i]) end
+        for i = 1, argc do
+            args[i] = _actor_clone(args[i])
+        end
 
         local function run_parallel(fn)
             local co = coroutine.create(function(...)
-                local running = coroutine.running()
-                _parallel_states[running] = true
-                local g = getgenv()
-                local prev = rawget(g, "__actor_parallel__")
-                rawset(g, "__actor_parallel__", true)
                 local ok, a, b, c, d, e = pcall(fn, ...)
-                if prev == nil then rawset(g, "__actor_parallel__", nil)
-                else rawset(g, "__actor_parallel__", prev) end
-                _parallel_states[running] = nil
-                if not ok then error(a, 0) end
+                if not ok then
+                    error(a, 0)
+                end
                 return _actor_clone(a), _actor_clone(b), _actor_clone(c), _actor_clone(d), _actor_clone(e)
             end)
+
             local ok, a, b, c, d, e = coroutine.resume(co, table.unpack(args, 1, argc))
-            _parallel_states[co] = nil
-            if not ok then error(a, 2) end
+            if not ok then
+                error(a, 2)
+            end
             return a, b, c, d, e
         end
 
         if type(fn_or_source) == "function" then
             return run_parallel(fn_or_source)
         elseif type(fn_or_source) == "string" then
-            local chunk, err = getgenv().loadstring(fn_or_source, "run_on_actor")
-            if not chunk then error(err, 2) end
-            return run_parallel(chunk)
+            local src = fn_or_source
+            src = string.gsub(src, "task%.desynchronize%s*%([^%)]*%)", "_mock_desynchronize()")
+            src = string.gsub(src, "task%.synchronize%s*%([^%)]*%)", "_mock_synchronize()")
+            
+            local chunk, err = getgenv().loadstring(src, "run_on_actor")
+            if not chunk then
+                error(err, 2)
+            end
+            
+            local g = getgenv()
+            local prev_desync = rawget(g, "_mock_desynchronize")
+            local prev_sync = rawget(g, "_mock_synchronize")
+            
+            g._mock_desynchronize = function()
+                local running = coroutine.running()
+                _parallel_states[running] = true
+                rawset(g, "__actor_parallel__", true)
+            end
+            
+            g._mock_synchronize = function()
+                local running = coroutine.running()
+                _parallel_states[running] = nil
+                rawset(g, "__actor_parallel__", nil)
+            end
+            
+            local results = table.pack(run_parallel(chunk))
+            
+            if prev_desync == nil then g._mock_desynchronize = nil else g._mock_desynchronize = prev_desync end
+            if prev_sync == nil then g._mock_synchronize = nil else g._mock_synchronize = prev_sync end
+            
+            return table.unpack(results, 1, results.n)
         else
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
@@ -516,8 +492,10 @@ end
 
 getgenv().getsignalargumentsinfo = function(signal)
     assert(typeof(signal) == "RBXScriptSignal", "invalid argument #1 to 'getsignalargumentsinfo' (RBXScriptSignal expected, got " .. typeof(signal) .. ")")
+    
     local signalStr = tostring(signal)
     local signalName = signalStr:match("Signal%s+(.+)") or signalStr:match("%.(%w+)$") or signalStr
+    
     local argumentTypes = {
         Touched = { { Type = "BasePart", Name = "hit" } },
         TouchEnded = { { Type = "BasePart", Name = "hit" } },
@@ -547,7 +525,11 @@ getgenv().getsignalargumentsinfo = function(signal)
         Fired = {},
         Event = {},
     }
-    if argumentTypes[signalName] then return argumentTypes[signalName] end
+    
+    if argumentTypes[signalName] then
+        return argumentTypes[signalName]
+    end
+    
     local args, conn = nil, nil
     pcall(function()
         conn = signal:Once(function(...)
@@ -555,13 +537,18 @@ getgenv().getsignalargumentsinfo = function(signal)
             for i = 1, select("#", ...) do
                 local val = select(i, ...)
                 local t = typeof(val)
-                if t == "Instance" then t = val.ClassName end
+                if t == "Instance" then
+                    t = val.ClassName
+                end
                 table.insert(args, { Type = t, Name = "arg" .. i })
             end
         end)
     end)
+    
     if conn then pcall(function() conn:Disconnect() end) end
+    
     if args and #args > 0 then return args end
+    
     return { { Type = "any", Name = "..." } }
 end
 
@@ -599,33 +586,132 @@ getgenv().getsignalwhitelist = function()
     }
 end
 
-local _menv_cache = setmetatable({}, { __mode = "k" })
-
-getgenv().getmenv = function()
-    local currentThread = coroutine.running()
-    if _menv_cache[currentThread] then return _menv_cache[currentThread] end
-    local level = 2
-    local success = false
-    local moduleEnv = nil
-    while level < 10 do
-        local info = debug.getinfo(level)
-        if not info then break end
-        local func = info.func
-        if func and type(func) == "function" then
-            local ok, env = pcall(function() return getfenv(func) end)
-            if ok and env and type(env) == "table" then moduleEnv = env; success = true; break end
-        end
-        level = level + 1
+local function makeSignal()
+    local threads = {}
+    local function reusableThreadCall(callback, thread, ...) callback(...); table.insert(threads, thread) end
+    local function reusableThread() while true do reusableThreadCall(coroutine.yield()) end end
+    local function disconnect(connection)
+        if not connection.Connected then return end
+        connection.Connected = nil
+        local signal, previous, next = connection.Signal, connection.Previous, connection.Next
+        if previous then previous.Next = next else signal.Tail = next end
+        if next then next.Previous = previous else signal.Head = previous end
     end
-    if success and moduleEnv then _menv_cache[currentThread] = moduleEnv; return moduleEnv end
-    local fallbackEnv = _G
-    _menv_cache[currentThread] = fallbackEnv
-    return fallbackEnv
+    local Signal = {}
+    Signal.__index = Signal
+    Signal.Connect = function(signal, callback)
+        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Connect' (function expected, got " .. type(callback) .. ")")
+        local head = signal.Head
+        local connection = { Signal = signal, Previous = head, Callback = callback, Connected = true, Disconnect = disconnect }
+        if head then head.Next = connection else signal.Tail = connection end
+        signal.Head = connection
+        return connection
+    end
+    Signal.Once = function(signal, callback)
+        assert(type(callback) == "function", "invalid argument #1 to 'Signal:Once' (function expected, got " .. type(callback) .. ")")
+        local head = signal.Head
+        local connection
+        connection = {
+            Signal = signal, Previous = head,
+            Callback = function(...)
+                if not connection.Connected then return end
+                connection.Connected = false
+                local previous, next = connection.Previous, connection.Next
+                if previous then previous.Next = next else signal.Tail = next end
+                if next then next.Previous = previous else signal.Head = previous end
+                callback(...)
+            end,
+            Connected = true, Disconnect = disconnect
+        }
+        if head then head.Next = connection else signal.Tail = connection end
+        signal.Head = connection
+        return connection
+    end
+    Signal.Wait = function(signal)
+        local thread = coroutine.running()
+        local head = signal.Head
+        local connection
+        connection = {
+            Signal = signal, Previous = head, Connected = true, Disconnect = disconnect,
+            Callback = function(...)
+                if not connection.Connected then return end
+                connection.Connected = false
+                local previous, next = connection.Previous, connection.Next
+                if previous then previous.Next = next else signal.Tail = next end
+                if next then next.Previous = previous else signal.Head = previous end
+                if coroutine.status(thread) == "suspended" then task.spawn(thread, ...) end
+            end
+        }
+        if head then head.Next = connection else signal.Tail = connection end
+        signal.Head = connection
+        return coroutine.yield()
+    end
+    Signal.Fire = function(signal, ...)
+        local connection = signal.Tail
+        while connection do
+            local nextConn = connection.Next
+            if connection.Callback then
+                local length = #threads
+                if length == 0 then
+                    local thread = coroutine.create(reusableThread)
+                    coroutine.resume(thread)
+                    task.spawn(thread, connection.Callback, thread, ...)
+                else
+                    local thread = threads[length]
+                    threads[length] = nil
+                    task.spawn(thread, connection.Callback, thread, ...)
+                end
+            end
+            connection = nextConn
+        end
+    end
+    Signal.DisconnectAll = function(signal)
+        local connection = signal.Tail
+        while connection do
+            local nextConnection = connection.Next
+            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
+            connection = nextConnection
+        end
+        signal.Tail = nil; signal.Head = nil
+    end
+    Signal.Destroy = function(signal)
+        local connection = signal.Tail
+        while connection do
+            local nextConnection = connection.Next
+            connection.Connected = nil; connection.Next = nil; connection.Previous = nil
+            connection = nextConnection
+        end
+        signal.Tail = nil; signal.Head = nil
+        setmetatable(signal, nil)
+    end
+    return setmetatable({}, Signal)
 end
 
-local cachedmethods = setmetatable({}, { __mode = "k" })
-getgenv().setnamecallmethod = function(method)
-    assert(type(method) == "string", "invalid argument #1 to 'setnamecallmethod' (string expected, got " .. type(method) .. ")")
-    local thread = coroutine.running()
-    rawset(cachedmethods, thread, method)
+getgenv().Signal    = { new = makeSignal }
+getgenv().makeSignal = makeSignal
+getgenv().setsimulationradius = function(radius, maxRadius)
+    radius = tonumber(radius); maxRadius = tonumber(maxRadius) or radius
+    assert(type(radius) == "number", "invalid argument #1 to 'setsimulationradius' (number expected)")
+    plr.SimulationRadius = radius; plr.MaximumSimulationRadius = maxRadius
 end
+
+getgenv().getsimulationradius = function()
+    local radius, maxRadius = 0, 0
+    if plr then
+        local ok1, v1 = pcall(function() return plr.SimulationRadius end); if ok1 and type(v1) == "number" then radius = v1 end
+        local ok2, v2 = pcall(function() return plr.MaximumSimulationRadius end)
+        if ok2 and type(v2) == "number" then maxRadius = v2
+        else local ok3, v3 = pcall(getgenv().gethiddenproperty, plr, "MaximumSimulationRadius"); if ok3 and type(v3) == "number" then maxRadius = v3 end end
+    end
+    return radius, maxRadius
+end
+
+local _saveinstance = nil
+getgenv().saveinstance = function(options)
+    options = options or {}
+    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
+    print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
+    _saveinstance = _saveinstance or getgenv().loadstring(getgenv().HttpGet("https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau", true), "saveinstance")()
+    return _saveinstance(options)
+end
+getgenv().savegame = getgenv().saveinstance
