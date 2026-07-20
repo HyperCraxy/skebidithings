@@ -131,6 +131,12 @@ do
     local _comm_channels = {}
     local _next_comm_channel_id = 1
     local _parallel_states = setmetatable({}, { __mode = "k" })
+    local _state_proxies    = setmetatable({}, { __mode = "k" }) 
+    local _thread_state     = setmetatable({}, { __mode = "k" }) 
+    local _actor_workers    = setmetatable({}, { __mode = "k" }) 
+    local _worker_actor     = setmetatable({}, { __mode = "k" }) 
+    local _next_state_id    = 1
+    local _main_state_proxy = nil
 
     local function _actor_clone(value, cache)
         local t = type(value)
@@ -148,11 +154,124 @@ do
         end
         return out
     end
+    local LuaStateProxy = {}
+    LuaStateProxy.__index = LuaStateProxy
 
+    local function _new_state_proxy(id, is_actor, actor)
+        return setmetatable({
+            Id = id,
+            IsActorState = is_actor,
+            _actor = actor,
+        }, LuaStateProxy)
+    end
+
+    function LuaStateProxy:Execute(source, ...)
+        assert(type(source) == "string", "bad argument #1 to 'Execute' (string expected)", 2)
+        local chunk, err = getgenv().loadstring(source, "LuaStateProxy:Execute")
+        if not chunk then
+            error(err, 2)
+        end
+        local argc = select("#", ...)
+        local args = table.pack(...)
+        for i = 1, argc do
+            args[i] = _actor_clone(args[i])
+        end
+
+        local g = getgenv()
+        local prev_parallel = rawget(g, "__actor_parallel__")
+        rawset(g, "__actor_parallel__", self.IsActorState == true)
+
+        local co = coroutine.create(function(...)
+            _parallel_states[coroutine.running()] = self.IsActorState == true
+            if self._actor then
+                _thread_state[coroutine.running()] = self
+            end
+            return chunk(...)
+        end)
+
+        local ok, a, b, c, d, e = coroutine.resume(co, table.unpack(args, 1, argc))
+
+        if prev_parallel == nil then
+            rawset(g, "__actor_parallel__", nil)
+        else
+            rawset(g, "__actor_parallel__", prev_parallel)
+        end
+
+        if not ok then
+            error(a, 2)
+        end
+        return _actor_clone(a), _actor_clone(b), _actor_clone(c), _actor_clone(d), _actor_clone(e)
+    end
+
+    function LuaStateProxy:GetActors()
+        local out = {}
+        if self._actor then
+            out[1] = self._actor
+        end
+        return out
+    end
+
+    local function _get_or_create_actor_state(actor)
+        local proxy = _state_proxies[actor]
+        if not proxy then
+            proxy = _new_state_proxy(_next_state_id, true, actor)
+            _next_state_id += 1
+            _state_proxies[actor] = proxy
+        end
+        return proxy
+    end
+
+    local function _get_main_state()
+        if _main_state_proxy then
+            return _main_state_proxy
+        end
+        _main_state_proxy = _new_state_proxy(0, false, nil)
+        return _main_state_proxy
+    end
+
+    local function _ensure_actor_worker(actor)
+        local existing = _actor_workers[actor]
+        if existing and existing.thread and coroutine.status(existing.thread) ~= "dead" then
+            return existing
+        end
+
+        local state = _get_or_create_actor_state(actor)
+        local worker = { queue = {}, actor = actor, thread = nil }
+
+        worker.thread = task.spawn(function()
+            _parallel_states[coroutine.running()] = true
+            _thread_state[coroutine.running()] = state
+
+            while true do
+                while #worker.queue > 0 do
+                    local item = table.remove(worker.queue, 1)
+                    if item then
+                        local g = getgenv()
+                        local prev = rawget(g, "__actor_parallel__")
+                        rawset(g, "__actor_parallel__", true)
+                        local ok, err = pcall(item.fn, table.unpack(item.args, 1, item.n))
+                        if prev == nil then
+                            rawset(g, "__actor_parallel__", nil)
+                        else
+                            rawset(g, "__actor_parallel__", prev)
+                        end
+                        if not ok then
+                            warn("[actor thread]", err)
+                        end
+                    end
+                end
+                task.wait(0.05)
+            end
+        end)
+
+        _actor_workers[actor] = worker
+        _worker_actor[worker.thread] = actor
+        return worker
+    end
     local function newChannelEvent()
         local connections = {}
         local ev = {}
-        
+
         function ev:Connect(callback)
             assert(type(callback) == "function", "bad argument #1 to 'Connect' (function expected)", 2)
             local conn = {
@@ -165,7 +284,7 @@ do
             connections[#connections + 1] = conn
             return conn
         end
-        
+
         function ev:Once(callback)
             assert(type(callback) == "function", "bad argument #1 to 'Once' (function expected)", 2)
             local conn
@@ -177,7 +296,7 @@ do
             end)
             return conn
         end
-        
+
         function ev:Wait()
             local thread = coroutine.running()
             local conn
@@ -189,7 +308,7 @@ do
             end)
             return coroutine.yield()
         end
-        
+
         function ev:Fire(...)
             local snapshot = {}
             for i = 1, #connections do
@@ -201,7 +320,7 @@ do
                 end
             end
         end
-        
+
         return ev
     end
 
@@ -210,7 +329,7 @@ do
         local queue = {}
         local channel = {}
         channel.Event = evt
-        
+
         function channel:Fire(...)
             local args = table.pack(...)
             local cloned = table.create(args.n)
@@ -220,12 +339,12 @@ do
             queue[#queue + 1] = cloned[1]
             evt:Fire(table.unpack(cloned, 1, args.n))
         end
-        
+
         function channel:send(...)
             self:Fire(...)
             return true
         end
-        
+
         function channel:receive()
             if #queue == 0 then
                 return nil
@@ -234,29 +353,28 @@ do
             table.remove(queue, 1)
             return first
         end
-        
+
         function channel:peek()
             return queue[1]
         end
-        
+
         function channel:clear()
             table.clear(queue)
         end
-        
+
         function channel:size()
             return #queue
         end
-        
+
         function channel:destroy()
             if self._id then
                 _comm_channels[self._id] = nil
             end
             table.clear(queue)
         end
-        
+
         return channel
     end
-
     getgenv().getactors = function()
         local out = {}
         for _, v in ipairs(game:GetDescendants()) do
@@ -345,10 +463,13 @@ do
             args[i] = _actor_clone(args[i])
         end
 
+        local actor_state = _get_or_create_actor_state(actor)
+
         local function run_parallel(fn)
             local co = coroutine.create(function(...)
                 local running = coroutine.running()
                 _parallel_states[running] = true
+                _thread_state[running] = actor_state
                 local g = getgenv()
                 local prev = rawget(g, "__actor_parallel__")
                 rawset(g, "__actor_parallel__", true)
@@ -359,6 +480,7 @@ do
                     rawset(g, "__actor_parallel__", prev)
                 end
                 _parallel_states[running] = nil
+                _thread_state[running] = nil
                 if not ok then
                     error(a, 0)
                 end
@@ -367,6 +489,7 @@ do
 
             local ok, a, b, c, d, e = coroutine.resume(co, table.unpack(args, 1, argc))
             _parallel_states[co] = nil
+            _thread_state[co] = nil
             if not ok then
                 error(a, 2)
             end
@@ -385,8 +508,101 @@ do
             error("bad argument #2 to 'run_on_actor' (function or string expected)", 2)
         end
     end
-getgenv().run_on_actors = getgenv().run_on_actor
-getgenv().runonactor = getgenv().run_on_actor
+    getgenv().run_on_actors = getgenv().run_on_actor
+    getgenv().runonactor = getgenv().run_on_actor
+    getgenv().getactorstates = function()
+        local states = {}
+        states[1] = _get_main_state()
+        for _, v in ipairs(game:GetDescendants()) do
+            if v.ClassName == "Actor" then
+                states[#states + 1] = _get_or_create_actor_state(v)
+            end
+        end
+        return states
+    end
+    getgenv().getgamestate = function()
+        return _get_main_state()
+    end
+    getgenv().getluastate = function(target)
+        if target == nil then
+            local co = coroutine.running()
+            local state = _thread_state[co]
+            if state then
+                return state
+            end
+            return _get_main_state()
+        end
+        if typeof(target) == "Instance" then
+            if target.ClassName == "Actor" then
+                return _get_or_create_actor_state(target)
+            elseif target:IsA("BaseScript") or target:IsA("ModuleScript") then
+                local actor = target:FindFirstAncestorOfClass("Actor")
+                if actor then
+                    return _get_or_create_actor_state(actor)
+                end
+                return _get_main_state()
+            end
+        end
+        error("bad argument #1 to 'getluastate' (Actor, BaseScript, or ModuleScript expected)", 2)
+    end
+    getgenv().getactorthreads = function()
+        local threads = {}
+        for _, v in ipairs(game:GetDescendants()) do
+            if v.ClassName == "Actor" then
+                local worker = _ensure_actor_worker(v)
+                if worker.thread and coroutine.status(worker.thread) ~= "dead" then
+                    threads[#threads + 1] = worker.thread
+                end
+            end
+        end
+        return threads
+    end
+    getgenv().run_on_thread = function(target_thread, source, ...)
+        assert(type(target_thread) == "thread", "bad argument #1 to 'run_on_thread' (thread expected)", 2)
+        assert(type(source) == "string", "bad argument #2 to 'run_on_thread' (string expected)", 2)
+
+        local actor = _worker_actor[target_thread]
+        if not actor then
+            error("bad argument #1 to 'run_on_thread' (not a valid actor thread)", 2)
+        end
+
+        local worker = _actor_workers[actor]
+        if not worker or worker.thread ~= target_thread then
+            error("bad argument #1 to 'run_on_thread' (thread is no longer active)", 2)
+        end
+
+        if coroutine.status(target_thread) == "dead" then
+            error("bad argument #1 to 'run_on_thread' (thread is dead)", 2)
+        end
+
+        local chunk, err = getgenv().loadstring(source, "run_on_thread")
+        if not chunk then
+            error(err, 2)
+        end
+
+        local argc = select("#", ...)
+        local args = table.pack(...)
+        for i = 1, argc do
+            args[i] = _actor_clone(args[i])
+        end
+
+        worker.queue[#worker.queue + 1] = { fn = chunk, args = args, n = argc }
+    end
+
+    local _on_actor_added = Instance.new("BindableEvent")
+    _on_actor_added.Name = "on_actor_added"
+    local _on_actor_state_created = Instance.new("BindableEvent")
+    _on_actor_state_created.Name = "on_actor_state_created"
+
+    getgenv().on_actor_added = _on_actor_added
+    getgenv().on_actor_state_created = _on_actor_state_created
+    game.DescendantAdded:Connect(function(descendant)
+        if descendant.ClassName == "Actor" then
+            _get_or_create_actor_state(descendant)
+            _on_actor_state_created:Fire(descendant)
+            _on_actor_added:Fire(descendant)
+        end
+    end)
 end
 local function makeSignal()
     local threads = {}
@@ -540,38 +756,4 @@ getgenv().getpropertychangedsignal = function(instance, property)
     assert(typeof(instance) == "Instance", "invalid argument #1 to 'getpropertychangedsignal' (Instance expected, got " .. typeof(instance) .. ")")
     assert(type(property) == "string",     "invalid argument #2 to 'getpropertychangedsignal' (string expected, got " .. type(property) .. ")")
     return instance:GetPropertyChangedSignal(property)
-end
-getgenv().getsimulationradius = function()
-    local radius, maxRadius = 0, 0
-    local plr = game:GetService("Players").LocalPlayer
-    if plr then
-        local ok1, v1 = pcall(function() return plr.SimulationRadius end)
-        if ok1 and type(v1) == "number" then radius = v1 end
-        local ok2, v2 = pcall(function() return plr.MaximumSimulationRadius end)
-        if ok2 and type(v2) == "number" then
-            maxRadius = v2
-        else
-            local gethiddenprop = gethiddenproperty or getgenv().gethiddenprop
-            if type(gethiddenprop) == "function" then
-                local ok3, v3 = pcall(gethiddenprop, plr, "MaximumSimulationRadius")
-                if ok3 and type(v3) == "number" then maxRadius = v3 end
-            end
-        end
-    end
-    return radius, maxRadius
-end
-
-getgenv().setsimulationradius = function(radius, maxRadius)
-    assert(type(radius) == "number", "invalid argument #1 to 'setsimulationradius' (number expected)")
-    local plr = game:GetService("Players").LocalPlayer
-    if plr then
-        pcall(function() plr.SimulationRadius = radius end)
-        if maxRadius then
-            local ok = pcall(function() plr.MaximumSimulationRadius = maxRadius end)
-            if not ok then
-                local sethiddenprop = sethiddenproperty or getgenv().sethiddenprop
-                if type(sethiddenprop) == "function" then pcall(sethiddenprop, plr, "MaximumSimulationRadius", maxRadius) end
-            end
-        end
-    end
 end
