@@ -1,1 +1,20 @@
-idk bro test
+[
+  {
+    "version": "1.0.0",
+    "date": "2026-07-15",
+    "changes": [
+      "Added JSON-styled changelogs viewer",
+      "Fixed workspace empty state create buttons",
+      "Improved editor performance"
+    ]
+  },
+  {
+    "version": "1.0.0",
+    "date": "2026-06-01",
+    "changes": [
+      "New file explorer with context menus",
+      "Auto-execute toggle per script",
+      "Revamped settings panel"
+    ]
+  }
+]
