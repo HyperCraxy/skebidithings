@@ -1,73 +1,56 @@
-assert(getscriptbytecode, "U arent meant to see ts.")
+assert(getscriptbytecode, "aaaa.")
 
-local HttpService = game:GetService("HttpService")
-
-_G.DecompilerKey = _G.DecompilerKey or nil
--- These are automatically added to the request URL.
-_G.DecompilerOptions = _G.DecompilerOptions or {
-    type_annotations = "functions",
-    generated_names = "readable",
-    indent = "tab",
-}
-
-local API_URL = "https://api.6-7.wtf/decompile"
-local MAX_RETRIES = 3
-
-local function errorMessage(title, detail)
-    local text = tostring(detail or "unknown error"):gsub("\r\n?", "\n")
-    return "-- " .. title .. "\n-- " .. text:gsub("\n", "\n-- ")
-end
-
-local function buildUrl()
-    local fields = {}
-    for name, value in pairs(_G.DecompilerOptions) do
-        fields[#fields + 1] = HttpService:UrlEncode(tostring(name))
-            .. "="
-            .. HttpService:UrlEncode(tostring(value))
-    end
-    if #fields == 0 then
-        return API_URL
-    end
-    return API_URL .. "?" .. table.concat(fields, "&")
-end
+local last = 0
+local httpservice = cloneref and cloneref(game:GetService("HttpService")) or game:GetService("HttpService")
 
 getgenv().decompile = function(scr)
     local ok, bytecode = pcall(getscriptbytecode, scr)
     if not ok then
-        return errorMessage("failed to read script bytecode", bytecode)
+        return "-- failed to read script bytecode\n--[[\n" .. tostring(bytecode) .. "\n--]]"
     end
 
-    local headers = { ["Content-Type"] = "application/octet-stream" }
-    if _G.DecompilerKey and _G.DecompilerKey ~= "" then
-        headers.Authorization = "Bearer " .. _G.DecompilerKey
+    local elapsed = os.clock() - last
+    if elapsed < 0.12 then
+        task.wait(0.12 - elapsed)
     end
 
-    local url = buildUrl()
+    local encoder = base64_encode
+    if not encoder then
+        encoder = function(data)
+            local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+            return ((data:gsub('.', function(x)
+                local r,byte = '',x:byte()
+                for i=8,1,-1 do
+                    r = r .. (byte % 2^i - byte % 2^(i-1) > 0 and '1' or '0')
+                end
+                return r
+            end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+                if #x < 6 then return '' end
+                local c = 0
+                for i=1,6 do
+                    c = c + (x:sub(i,i) == '1' and 2^(6-i) or 0)
+                end
+                return b:sub(c+1,c+1)
+            end)..({ '', '==', '=' })[#data % 3 + 1])
+        end
+    end
 
-    for attempt = 0, MAX_RETRIES do
-        local sent, res = pcall(request, {
-            Url = url,
-            Method = "POST",
-            Headers = headers,
-            Body = bytecode,
+    local res = request({
+        Url = "https://api.lua.expert/decompile",
+        Method = "POST",
+        Headers = {
+            ["content-type"] = "application/json"
+        },
+        Body = httpservice:JSONEncode({
+            script = encoder(bytecode)
         })
+    })
 
-        local status = sent and res and res.StatusCode
-        if status == 200 then
-            return res.Body
-        end
+    last = os.clock()
 
-        local retryable = not status or status == 429 or status >= 500
-        if attempt == MAX_RETRIES or not retryable then
-            return errorMessage(
-                "decompiler API request failed",
-                status and ("HTTP " .. status .. "\n" .. tostring(res.Body)) or res
-            )
-        end
-
-        local resHeaders = res and res.Headers or {}
-        local delay = tonumber(resHeaders["Retry-After"] or resHeaders["retry-after"]) or 2 ^ attempt
-        warn(string.format("[6-7.wtf] Request failed; retrying in %.1f seconds", delay))
-        task.wait(delay)
+    if not res or res.StatusCode ~= 200 then
+        return "-- api request error\n--[[\n" .. (res and res.Body or "no response") .. "\n--]]"
     end
+
+    return res.Body
 end
