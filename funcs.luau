@@ -1394,3 +1394,39 @@ getgenv().setrenderproperty = function(obj, prop, value)
     end
     obj[prop] = value
 end
+local _menv_cache = setmetatable({}, { __mode = "k" })
+
+getgenv().getmenv = function()
+    local currentThread = coroutine.running()
+    if _menv_cache[currentThread] then
+        return _menv_cache[currentThread]
+    end
+    local level = 2 
+    local success = false
+    local moduleEnv = nil
+    while level < 10 do
+        local info = debug.getinfo(level)
+        if not info then break end
+        local func = info.func
+        if func and type(func) == "function" then
+            local ok, env = pcall(function()
+                return getfenv(func)
+            end)
+            
+            if ok and env and type(env) == "table" then
+                moduleEnv = env
+                success = true
+                break
+            end
+        end
+        
+        level = level + 1
+    end 
+    if success and moduleEnv then
+        _menv_cache[currentThread] = moduleEnv
+        return moduleEnv
+    end  
+    local fallbackEnv = _G
+    _menv_cache[currentThread] = fallbackEnv
+    return fallbackEnv
+end
