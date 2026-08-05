@@ -707,52 +707,7 @@ end
 getgenv().Signal    = { new = makeSignal }
 getgenv().makeSignal = makeSignal
 
-local _saveinstance = nil
-getgenv().saveinstance = function(options)
-    options = options or {}
-    assert(type(options) == "table", "invalid argument #1 to 'saveinstance' (table expected, got " .. type(options) .. ") ", 2)
-    print("saveinstance Powered by UniversalSynSaveInstance | AGPL-3.0 license")
-    _saveinstance = _saveinstance or getgenv().loadstring(getgenv().HttpGet("https://github.com/HyperCraxy/skebidithings/blob/main/Saveinstance.lua", true), "saveinstance")()
-    return _saveinstance(options)
-end
-getgenv().savegame = getgenv().saveinstance
 
-local _menv_cache = setmetatable({}, { __mode = "k" })
-
-getgenv().getmenv = function()
-    local currentThread = coroutine.running()
-    if _menv_cache[currentThread] then
-        return _menv_cache[currentThread]
-    end
-    local level = 2 
-    local success = false
-    local moduleEnv = nil
-    while level < 10 do
-        local info = debug.getinfo(level)
-        if not info then break end
-        local func = info.func
-        if func and type(func) == "function" then
-            local ok, env = pcall(function()
-                return getfenv(func)
-            end)
-            
-            if ok and env and type(env) == "table" then
-                moduleEnv = env
-                success = true
-                break
-            end
-        end
-        
-        level = level + 1
-    end 
-    if success and moduleEnv then
-        _menv_cache[currentThread] = moduleEnv
-        return moduleEnv
-    end  
-    local fallbackEnv = _G
-    _menv_cache[currentThread] = fallbackEnv
-    return fallbackEnv
-end
 getgenv().getpropertychangedsignal = function(instance, property)
     assert(typeof(instance) == "Instance", "invalid argument #1 to 'getpropertychangedsignal' (Instance expected, got " .. typeof(instance) .. ")")
     assert(type(property) == "string",     "invalid argument #2 to 'getpropertychangedsignal' (string expected, got " .. type(property) .. ")")
