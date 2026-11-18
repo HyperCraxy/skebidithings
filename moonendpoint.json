@@ -2,11 +2,11 @@
 {
   "name": "Moon",
   "updated": true,
-  "version": "1.0.2",
-  "updateDate": "11/11/2026 at 11:59 AM UTC",
+  "version": "1.0.3",
+  "updateDate": "11/17/2026 at 6:10 PM UTC",
   "Windows": {
     "exe": "https://work.ink/2NQ3/moonexecutor"
   },
   "discord_invite": "https://discord.gg/jeapJvFtcn",
-  "Changelog": "1.0.2\n[~] Updated Latest Version"
+  "Changelog": "1.0.3\n[~] Updated Latest Version\n [+] luarmor support\n [+] Luraph support"
 }
